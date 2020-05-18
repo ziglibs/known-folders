@@ -25,32 +25,68 @@ pub const SpecialFolder = enum {
 pub const Error = error{OutOfMemory};
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?std.fs.Dir {
-    switch (std.builtin.os.tag) {
-        .windows => {
-            // TODO: Implement
-            @panic("not implemented yet");
-        },
-        .macosx => {
-            // TODO: Implement
-            @panic("not implemented yet");
-        },
+pub fn open(allocator: *std.mem.Allocator, folder: SpecialFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
+    var path_or_null = try getPath(allocator, folder);
+    if (path_or_null) |path| {
+        defer allocator.free(path);
 
-        // Assume unix derivatives with XDG
-        else => {
-            // TODO: Implement
-            @panic("not implemented yet");
-        },
+        return try std.fs.cwd().openDir(path, args);
+    } else {
+        return null;
     }
-    unreachable;
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
 pub fn getPath(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?[]const u8 {
+
+    // used for temporary allocations
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
     switch (std.builtin.os.tag) {
         .windows => {
-            // TODO: Implement
-            @panic("not implemented yet");
+            const folder_spec = windows_folder_spec.get(folder);
+
+            switch (folder_spec) {
+                .by_guid => |guid| {
+                    var dir_path_ptr: [*:0]u16 = undefined;
+                    switch (std.os.windows.shell32.SHGetKnownFolderPath(
+                        &guid,
+                        std.os.windows.KF_FLAG_CREATE, // TODO: Chose sane option here?
+                        null,
+                        &dir_path_ptr,
+                    )) {
+                        std.os.windows.S_OK => {
+                            defer std.os.windows.ole32.CoTaskMemFree(@ptrCast(*c_void, dir_path_ptr));
+                            const global_dir = std.unicode.utf16leToUtf8Alloc(allocator, std.mem.spanZ(dir_path_ptr)) catch |err| switch (err) {
+                                error.UnexpectedSecondSurrogateHalf => return null,
+                                error.ExpectedSecondSurrogateHalf => return null,
+                                error.DanglingSurrogateHalf => return null,
+                                error.OutOfMemory => return error.OutOfMemory,
+                            };
+                            return global_dir;
+                        },
+                        std.os.windows.E_OUTOFMEMORY => return error.OutOfMemory,
+                        else => return null,
+                    }
+                },
+                .by_env => |env_path| {
+                    if (env_path.subdir) |sub_dir| {
+                        const root_path = std.process.getEnvVarOwned(&arena.allocator, env_path.env_var) catch |err| switch (err) {
+                            error.EnvironmentVariableNotFound => return null,
+                            error.InvalidUtf8 => return null,
+                            error.OutOfMemory => |e| return e,
+                        };
+                        return try std.fs.path.join(allocator, &[_][]const u8{ root_path, sub_dir });
+                    } else {
+                        return std.process.getEnvVarOwned(allocator, env_path.env_var) catch |err| switch (err) {
+                            error.EnvironmentVariableNotFound => return null,
+                            error.InvalidUtf8 => return null,
+                            error.OutOfMemory => |e| return e,
+                        };
+                    }
+                },
+            }
         },
         .macosx => {
             // TODO: Implement
@@ -70,8 +106,8 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?[]co
 const WindowsFolderSpec = union(enum) {
     by_guid: std.os.windows.GUID,
     by_env: struct {
-        root: []const u8,
-        subdirs: []const []const u8,
+        env_var: []const u8,
+        subdir: ?[]const u8,
     },
 };
 
@@ -101,7 +137,7 @@ fn SpecialFolderConfig(comptime T: type) type {
 
         fn get(self: Self, folder: SpecialFolder) T {
             inline for (std.meta.fields(Self)) |fld| {
-                if (self == @field(SpecialFolder, fld.name))
+                if (folder == @field(SpecialFolder, fld.name))
                     return @field(self, fld.name);
             }
             unreachable;
@@ -125,12 +161,12 @@ const windows_folder_spec = comptime blk: {
         .public = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{DFDF76A2-C82A-4D63-906A-5644AC457385}") }, // FOLDERID_Public
         .fonts = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{FD228CB7-AE11-4AE3-864C-16F3910AB8FE}") }, // FOLDERID_Fonts
         .app_menu = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{625B53C3-AB48-4EC1-BA1F-A1EF4146FC19}") }, // FOLDERID_StartMenu
-        .cache = WindowsFolderSpec{ .by_env = .{ .root = "LOCALAPPDATA", .subdirs = &[_][]const u8{"Temp"} } }, // %LOCALAPPDATA%\Temp
-        .roaming_configuration = WindowsFolderSpec{ .by_env = .{ .root = "APPDATA", .subdirs = &[0][]const u8{} } }, // %APPDATA%
+        .cache = WindowsFolderSpec{ .by_env = .{ .env_var = "LOCALAPPDATA", .subdir = "Temp" } }, // %LOCALAPPDATA%\Temp
+        .roaming_configuration = WindowsFolderSpec{ .by_env = .{ .env_var = "APPDATA", .subdir = null } }, // %APPDATA%
         .local_configuration = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}") }, // FOLDERID_LocalAppData
-        .data = WindowsFolderSpec{ .by_env = .{ .root = "APPDATA", .subdirs = &[0][]const u8{} } }, // %LOCALAPPDATA%\Temp
+        .data = WindowsFolderSpec{ .by_env = .{ .env_var = "APPDATA", .subdir = null } }, // %LOCALAPPDATA%\Temp
         .system_folder = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}") }, // FOLDERID_System
-        .runtime = WindowsFolderSpec{ .by_env = .{ .root = "LOCALAPPDATA", .subdirs = &[_][]const u8{"Temp"} } },
+        .runtime = WindowsFolderSpec{ .by_env = .{ .env_var = "LOCALAPPDATA", .subdir = "Temp" } },
     };
 };
 
@@ -142,7 +178,22 @@ comptime {
     _ = getPath;
 }
 
-test "query each windows known folders" {
-    // TODO: Implement this test
-    _ = windows_folder_spec;
+test "query each known folders" {
+    inline for (std.meta.fields(SpecialFolder)) |fld| {
+        var path_or_null = try getPath(std.testing.allocator, @field(SpecialFolder, fld.name));
+        if (path_or_null) |path| {
+            // TODO: Remove later
+            std.debug.warn("{} => '{}'\n", .{ fld.name, path });
+            std.testing.allocator.free(path);
+        }
+    }
+}
+
+test "open each known folders" {
+    inline for (std.meta.fields(SpecialFolder)) |fld| {
+        var dir_or_null = try open(std.testing.allocator, @field(SpecialFolder, fld.name), .{ .iterate = false, .access_sub_paths = true });
+        if (dir_or_null) |*dir| {
+            dir.close();
+        }
+    }
 }
