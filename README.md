@@ -42,7 +42,7 @@
 | Downloads             | FOLDERID_Downloads       | XDG_DOWNLOAD_DIR           | HOME/Downloads |
 | Public                | FOLDERID_Public          | XDG_PUBLICSHARE_DIR        | HOME/Public |
 | Fonts                 | FOLDERID_Fonts           | XDG_DATA_HOME/fonts        | HOME/Library/Fonts |
-| App Menu              | FOLDERID_StartMenu       | XDG_DATA_HOME/applications | |
+| App Menu              | FOLDERID_StartMenu       | XDG_DATA_HOME/applications | HOME/Applications |
 | Cache                 | %LOCALAPPDATA%/Temp      | XDG_CACHE_HOME             | HOME/Library/Caches |
 | Roaming Configuration | %APPDATA%	           | XDG_CONFIG_HOME            | HOME/Library/Preferences |
 | Local Configuration   | %LOCALAPPDATA%           | XDG_CONFIG_HOME            | HOME/Library/Application Support |
