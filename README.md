@@ -1,4 +1,4 @@
-# Zig Special Folders Project
+# Zig Known Folders Project
 
 ## Design Goals
 
