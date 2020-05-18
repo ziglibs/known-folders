@@ -21,9 +21,8 @@ pub const SpecialFolder = enum {
 };
 
 // Explicitly define possible errors to make it clearer what callers need to handle
-pub const Error = error{
 // TODO: fill this in
-OutOfMemory};
+pub const Error = error{OutOfMemory};
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
 pub fn open(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?std.fs.Dir {
