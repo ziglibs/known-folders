@@ -44,7 +44,7 @@
 | Fonts                 | FOLDERID_Fonts           | XDG_DATA_HOME/fonts        | HOME/Library/Fonts |
 | App Menu              | FOLDERID_StartMenu       | XDG_DATA_HOME/applications | |
 | Cache                 | %LOCALAPPDATA%/Temp      | XDG_CACHE_HOME             | HOME/Library/Caches |
-| Roaming Configuration | %APPDATA%	               | XDG_CONFIG_HOME            | HOME/Library/Preferences |
+| Roaming Configuration | %APPDATA%	           | XDG_CONFIG_HOME            | HOME/Library/Preferences |
 | Local Configuration   | %LOCALAPPDATA%           | XDG_CONFIG_HOME            | HOME/Library/Application Support |
 | Data                  | %APPDATA%                | XDG_DATA_HOME              | HOME/Library/Application Support | 
 | System Folder         | FOLDERID_System          | /                          | / |
@@ -53,7 +53,7 @@
 ## API
 ```zig
 pub const SpecialFolder = enum {
-	home,
+  home,
   documents,
   pictures,
   music,
@@ -65,10 +65,11 @@ pub const SpecialFolder = enum {
   fonts,
   app_menu,
   cache,
-  local_configuration,
   roaming_configuration,
+  local_configuration,
   data,
   system_folder,
+  runtime,
 };
 
 // Explicitly define possible errors to make it clearer what callers need to handle
