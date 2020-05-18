@@ -26,13 +26,43 @@ pub const Error = error{OutOfMemory};
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
 pub fn open(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?std.fs.Dir {
-    // TODO: Implement this
+    switch (std.builtin.os.tag) {
+        .windows => {
+            // TODO: Implement
+            @panic("not implemented yet");
+        },
+        .macosx => {
+            // TODO: Implement
+            @panic("not implemented yet");
+        },
+
+        // Assume unix derivatives with XDG
+        else => {
+            // TODO: Implement
+            @panic("not implemented yet");
+        },
+    }
     unreachable;
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
 pub fn getPath(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?[]const u8 {
-    // TODO: Implement this
+    switch (std.builtin.os.tag) {
+        .windows => {
+            // TODO: Implement
+            @panic("not implemented yet");
+        },
+        .macosx => {
+            // TODO: Implement
+            @panic("not implemented yet");
+        },
+
+        // Assume unix derivatives with XDG
+        else => {
+            // TODO: Implement
+            @panic("not implemented yet");
+        },
+    }
     unreachable;
 }
 
@@ -81,6 +111,7 @@ fn SpecialFolderConfig(comptime T: type) type {
 
 /// Stores how to find each special folder on windows.
 const windows_folder_spec = comptime blk: {
+    // workaround for zig eval branch quota when parsing the GUIDs
     @setEvalBranchQuota(10_000);
     break :blk SpecialFolderConfig(WindowsFolderSpec){
         .home = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{5E6C858F-0E22-4760-9AFE-EA3317B67173}") }, // FOLDERID_Profile
