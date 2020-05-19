@@ -105,7 +105,7 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
                     if (std.os.getenv("HOME")) |home| {
                         if (config_dir.openFile("user-dirs.dirs", .{}) catch null) |user_dirs| {
                             var read: [1024 * 8]u8 = undefined;
-                            if (user_dirs.inStream().readAll(&read) catch null) |_| {
+                            if (user_dirs.readAll(&read) catch null) |_| {
                                 var line_it = std.mem.split(&read, "\n");
                                 while (line_it.next()) |line| {
                                     if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
@@ -116,8 +116,8 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
                                         const rest = split.rest();
                                         var subdir = rest[6 .. rest.len - 1];
                                         env_opt = std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir }) catch null;
+                                        break;
                                     }
-                                    break;
                                 }
                             }
                         }
