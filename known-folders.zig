@@ -111,6 +111,18 @@ const WindowsFolderSpec = union(enum) {
     },
 };
 
+/// Contains the xdg environment variable amd the default value for each available known-folder on windows
+const XdgFolderSpec = struct {
+    env: ?struct {
+        name: []const u8,
+        suffix: ?[]const u8,
+    },
+    default: ?struct {
+        path: []const u8,
+        inside_home: bool,
+    },
+};
+
 /// This returns a struct type with one field per SpecialFolder of type `T`.
 /// used for storing different config data per field
 fn SpecialFolderConfig(comptime T: type) type {
@@ -170,6 +182,31 @@ const windows_folder_spec = comptime blk: {
     };
 };
 
+/// Stores how to find each special folder in xdg.
+const xdg_folder_spec = comptime blk: {
+    // workaround for zig eval branch quota when parsing the GUIDs
+    @setEvalBranchQuota(10_000);
+    break :blk SpecialFolderConfig(XdgFolderSpec){
+        .home = XdgFolderSpec{ .env = .{ .name = "HOME", .suffix = null }, .default = null },
+        .documents = XdgFolderSpec{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .suffix = null }, .default = .{ .path = "Documents", .inside_home = true } },
+        .pictures = XdgFolderSpec{ .env = .{ .name = "XDG_PICTURES_DIR", .suffix = null }, .default = .{ .path = "Pictures", .inside_home = true } },
+        .music = XdgFolderSpec{ .env = .{ .name = "XDG_MUSIC_DIR", .suffix = null }, .default = .{ .path = "Music", .inside_home = true } },
+        .videos = XdgFolderSpec{ .env = .{ .name = "XDG_VIDEOS_DIR", .suffix = null }, .default = .{ .path = "Videos", .inside_home = true } },
+        .templates = XdgFolderSpec{ .env = .{ .name = "XDG_TEMPLATES_DIR", .suffix = null }, .default = .{ .path = "Templates", .inside_home = true } },
+        .desktop = XdgFolderSpec{ .env = .{ .name = "XDG_DESKTOP_DIR", .suffix = null }, .default = .{ .path = "Desktop", .inside_home = true } },
+        .downloads = XdgFolderSpec{ .env = .{ .name = "XDG_DOWNLOAD_DIR", .suffix = null }, .default = .{ .path = "Downloads", .inside_home = true } },
+        .public = XdgFolderSpec{ .env = .{ .name = "XDG_PUBLICSHARE_DIR", .suffix = null }, .default = .{ .path = "Public", .inside_home = true } },
+        .fonts = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .suffix = "fonts" }, .default = .{ .path = ".local/share/fonts", .inside_home = true } },
+        .app_menu = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .suffix = "applications" }, .default = .{ .path = ".local/share/applications", .inside_home = true } },
+        .cache = XdgFolderSpec{ .env = .{ .name = "XDG_CACHE_HOME", .suffix = null }, .default = .{ .path = ".cache", .inside_home = true } },
+        .roaming_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .suffix = null }, .default = .{ .path = ".config", .inside_home = true } },
+        .local_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .suffix = null }, .default = .{ .path = ".config", .inside_home = true } },
+        .data = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .suffix = null }, .default = .{ .path = ".local/share", .inside_home = true } },
+        .system_folder = XdgFolderSpec{ .env = .{ .name = "/", .suffix = null }, .default = .{ .path = "/", .inside_home = false } },
+        .runtime = XdgFolderSpec{ .env = .{ .name = "XDG_RUNTIME_DIR", .suffix = null }, .default = null },
+    };
+};
+
 // Ref decls
 comptime {
     _ = SpecialFolder;
@@ -196,4 +233,9 @@ test "open each known folders" {
             dir.close();
         }
     }
+}
+
+test "query each xdg known folders" {
+    // TODO: Implement this test
+    _ = xdg_folder_spec;
 }
