@@ -202,7 +202,7 @@ const xdg_folder_spec = comptime blk: {
         .roaming_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .suffix = null }, .default = .{ .path = ".config", .inside_home = true } },
         .local_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .suffix = null }, .default = .{ .path = ".config", .inside_home = true } },
         .data = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .suffix = null }, .default = .{ .path = ".local/share", .inside_home = true } },
-        .system_folder = XdgFolderSpec{ .env = .{ .name = "/", .suffix = null }, .default = .{ .path = "/", .inside_home = false } },
+        .system_folder = XdgFolderSpec{ .env = null, .default = .{ .path = "/", .inside_home = false } },
         .runtime = XdgFolderSpec{ .env = .{ .name = "XDG_RUNTIME_DIR", .suffix = null }, .default = null },
     };
 };
