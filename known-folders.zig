@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const SpecialFolder = enum {
+pub const KnownFolder = enum {
     home,
     documents,
     pictures,
@@ -24,7 +24,7 @@ pub const SpecialFolder = enum {
 pub const Error = error{OutOfMemory};
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: *std.mem.Allocator, folder: SpecialFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
+pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
     var path_or_null = try getPath(allocator, folder);
     if (path_or_null) |path| {
         defer allocator.free(path);
@@ -36,7 +36,7 @@ pub fn open(allocator: *std.mem.Allocator, folder: SpecialFolder, args: std.fs.D
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?[]const u8 {
+pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
 
     // used for temporary allocations
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -119,9 +119,9 @@ const XdgFolderSpec = struct {
     default: ?[]const u8,
 };
 
-/// This returns a struct type with one field per SpecialFolder of type `T`.
+/// This returns a struct type with one field per KnownFolder of type `T`.
 /// used for storing different config data per field
-fn SpecialFolderConfig(comptime T: type) type {
+fn KnownFolderConfig(comptime T: type) type {
     return struct {
         const Self = @This();
 
@@ -142,9 +142,9 @@ fn SpecialFolderConfig(comptime T: type) type {
         data: T,
         runtime: T,
 
-        fn get(self: Self, folder: SpecialFolder) T {
+        fn get(self: Self, folder: KnownFolder) T {
             inline for (std.meta.fields(Self)) |fld| {
-                if (folder == @field(SpecialFolder, fld.name))
+                if (folder == @field(KnownFolder, fld.name))
                     return @field(self, fld.name);
             }
             unreachable;
@@ -152,11 +152,11 @@ fn SpecialFolderConfig(comptime T: type) type {
     };
 }
 
-/// Stores how to find each special folder on windows.
+/// Stores how to find each known folder on windows.
 const windows_folder_spec = comptime blk: {
     // workaround for zig eval branch quota when parsing the GUIDs
     @setEvalBranchQuota(10_000);
-    break :blk SpecialFolderConfig(WindowsFolderSpec){
+    break :blk KnownFolderConfig(WindowsFolderSpec){
         .home = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{5E6C858F-0E22-4760-9AFE-EA3317B67173}") }, // FOLDERID_Profile
         .documents = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{FDD39AD0-238F-46AF-ADB4-6C85480369C7}") }, // FOLDERID_Documents
         .pictures = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{33E28130-4E1E-4676-835A-98395C3BC3BB}") }, // FOLDERID_Pictures
@@ -176,11 +176,11 @@ const windows_folder_spec = comptime blk: {
     };
 };
 
-/// Stores how to find each special folder in xdg.
+/// Stores how to find each known folder in xdg.
 const xdg_folder_spec = comptime blk: {
     // workaround for zig eval branch quota when parsing the GUIDs
     @setEvalBranchQuota(10_000);
-    break :blk SpecialFolderConfig(XdgFolderSpec){
+    break :blk KnownFolderConfig(XdgFolderSpec){
         .home = XdgFolderSpec{ .env = .{ .name = "HOME", .suffix = null }, .default = null },
         .documents = XdgFolderSpec{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .suffix = null }, .default = "Documents" },
         .pictures = XdgFolderSpec{ .env = .{ .name = "XDG_PICTURES_DIR", .suffix = null }, .default = "Pictures" },
@@ -202,15 +202,15 @@ const xdg_folder_spec = comptime blk: {
 
 // Ref decls
 comptime {
-    _ = SpecialFolder;
+    _ = KnownFolder;
     _ = Error;
     _ = open;
     _ = getPath;
 }
 
 test "query each known folders" {
-    inline for (std.meta.fields(SpecialFolder)) |fld| {
-        var path_or_null = try getPath(std.testing.allocator, @field(SpecialFolder, fld.name));
+    inline for (std.meta.fields(KnownFolder)) |fld| {
+        var path_or_null = try getPath(std.testing.allocator, @field(KnownFolder, fld.name));
         if (path_or_null) |path| {
             // TODO: Remove later
             std.debug.warn("{} => '{}'\n", .{ fld.name, path });
@@ -220,8 +220,8 @@ test "query each known folders" {
 }
 
 test "open each known folders" {
-    inline for (std.meta.fields(SpecialFolder)) |fld| {
-        var dir_or_null = try open(std.testing.allocator, @field(SpecialFolder, fld.name), .{ .iterate = false, .access_sub_paths = true });
+    inline for (std.meta.fields(KnownFolder)) |fld| {
+        var dir_or_null = try open(std.testing.allocator, @field(KnownFolder, fld.name), .{ .iterate = false, .access_sub_paths = true });
         if (dir_or_null) |*dir| {
             dir.close();
         }
