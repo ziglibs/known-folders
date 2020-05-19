@@ -21,7 +21,7 @@ pub const KnownFolder = enum {
 
 // Explicitly define possible errors to make it clearer what callers need to handle
 // TODO: fill this in
-pub const Error = error{OutOfMemory};
+pub const Error = error{ ParseError, OutOfMemory };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
 pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
@@ -106,15 +106,19 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
                         if (config_dir.openFile("user-dirs.dirs", .{}) catch null) |user_dirs| {
                             var read: [1024 * 8]u8 = undefined;
                             if (user_dirs.readAll(&read) catch null) |_| {
+                                // 7 corresponds to ="$HOME
+                                const start = folder_spec.env.name.len + 7;
+
                                 var line_it = std.mem.split(&read, "\n");
                                 while (line_it.next()) |line| {
                                     if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
-                                        var split = std.mem.split(line, "=");
-                                        _ = split.next();
+                                        const end = line.len - 1;
+                                        if (start >= end) {
+                                            return error.ParseError;
+                                        }
 
-                                        // "$HOME/123" -> /123
-                                        const rest = split.rest();
-                                        var subdir = rest[6 .. rest.len - 1];
+                                        var subdir = line[start..end];
+
                                         env_opt = std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir }) catch null;
                                         break;
                                     }
