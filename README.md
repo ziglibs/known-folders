@@ -37,18 +37,16 @@
 | Pictures              | FOLDERID_Pictures        | XDG_PICTURES_DIR           | HOME/Pictures |
 | Music                 | FOLDERID_Music           | XDG_MUSIC_DIR              | HOME/Music |
 | Videos                | FOLDERID_Videos          | XDG_VIDEOS_DIR             | HOME/Movies |
-| Templates             | FOLDERID_Templates       | XDG_TEMPLATES_DIR          | (N/A) |
 | Desktop               | FOLDERID_Desktop         | XDG_DESKTOP_DIR            | HOME/Desktop |
 | Downloads             | FOLDERID_Downloads       | XDG_DOWNLOAD_DIR           | HOME/Downloads |
 | Public                | FOLDERID_Public          | XDG_PUBLICSHARE_DIR        | HOME/Public |
 | Fonts                 | FOLDERID_Fonts           | XDG_DATA_HOME/fonts        | HOME/Library/Fonts |
 | App Menu              | FOLDERID_StartMenu       | XDG_DATA_HOME/applications | HOME/Applications |
 | Cache                 | %LOCALAPPDATA%/Temp      | XDG_CACHE_HOME             | HOME/Library/Caches |
-| Roaming Configuration | %APPDATA%	           | XDG_CONFIG_HOME            | HOME/Library/Preferences |
+| Roaming Configuration | %APPDATA%	               | XDG_CONFIG_HOME            | HOME/Library/Preferences |
 | Local Configuration   | %LOCALAPPDATA%           | XDG_CONFIG_HOME            | HOME/Library/Application Support |
 | Data                  | %APPDATA%                | XDG_DATA_HOME              | HOME/Library/Application Support | 
-| System Folder         | FOLDERID_System          | /                          | / |
-| Runtime               | %LOCALAPPDATA%/Temp      | XDG_RUNTIME_DIR            | ? |
+| Runtime               | %LOCALAPPDATA%/Temp      | XDG_RUNTIME_DIR            | HOME/Library/Application Support |
 
 ## API
 ```zig
@@ -58,7 +56,6 @@ pub const KnownFolder = enum {
     pictures,
     music,
     videos,
-    templates,
     desktop,
     downloads,
     public,

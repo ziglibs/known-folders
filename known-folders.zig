@@ -6,7 +6,6 @@ pub const KnownFolder = enum {
     pictures,
     music,
     videos,
-    templates,
     desktop,
     downloads,
     public,
@@ -87,8 +86,18 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
             }
         },
         .macosx => {
-            // TODO: Implement
-            @panic("not implemented yet");
+            const folder_spec = mac_folder_spec.get(folder);
+
+            const home_dir = if (std.os.getenv("HOME")) |home|
+                home
+            else
+                return null;
+
+            if (folder_spec.suffix) |suffix| {
+                return try std.fs.path.join(allocator, &[_][]const u8{ home_dir, suffix });
+            } else {
+                return try std.mem.dupe(allocator, u8, home_dir);
+            }
         },
 
         // Assume unix derivatives with XDG
@@ -168,6 +177,11 @@ const XdgFolderSpec = struct {
     default: ?[]const u8,
 };
 
+/// Contains the folder items for MacOS X
+const MacFolderSpec = struct {
+    suffix: ?[]const u8,
+};
+
 /// This returns a struct type with one field per KnownFolder of type `T`.
 /// used for storing different config data per field
 fn KnownFolderConfig(comptime T: type) type {
@@ -179,7 +193,6 @@ fn KnownFolderConfig(comptime T: type) type {
         pictures: T,
         music: T,
         videos: T,
-        templates: T,
         desktop: T,
         downloads: T,
         public: T,
@@ -211,7 +224,6 @@ const windows_folder_spec = comptime blk: {
         .pictures = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{33E28130-4E1E-4676-835A-98395C3BC3BB}") }, // FOLDERID_Pictures
         .music = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{4BD8D571-6D19-48D3-BE97-422220080E43}") }, // FOLDERID_Music
         .videos = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{18989B1D-99B5-455B-841C-AB7C74E4DDFC}") }, // FOLDERID_Videos
-        .templates = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{A63293E8-664E-48DB-A079-DF759E0509F7}") }, // FOLDERID_Templates
         .desktop = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}") }, // FOLDERID_Desktop
         .downloads = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{374DE290-123F-4565-9164-39C4925E467B}") }, // FOLDERID_Downloads
         .public = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{DFDF76A2-C82A-4D63-906A-5644AC457385}") }, // FOLDERID_Public
@@ -226,27 +238,40 @@ const windows_folder_spec = comptime blk: {
 };
 
 /// Stores how to find each known folder in xdg.
-const xdg_folder_spec = comptime blk: {
-    // workaround for zig eval branch quota when parsing the GUIDs
-    @setEvalBranchQuota(10_000);
-    break :blk KnownFolderConfig(XdgFolderSpec){
-        .home = XdgFolderSpec{ .env = .{ .name = "HOME", .user_dir = false, .suffix = null }, .default = null },
-        .documents = XdgFolderSpec{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .user_dir = true, .suffix = null }, .default = "/Documents" },
-        .pictures = XdgFolderSpec{ .env = .{ .name = "XDG_PICTURES_DIR", .user_dir = true, .suffix = null }, .default = "/Pictures" },
-        .music = XdgFolderSpec{ .env = .{ .name = "XDG_MUSIC_DIR", .user_dir = true, .suffix = null }, .default = "/Music" },
-        .videos = XdgFolderSpec{ .env = .{ .name = "XDG_VIDEOS_DIR", .user_dir = true, .suffix = null }, .default = "/Videos" },
-        .templates = XdgFolderSpec{ .env = .{ .name = "XDG_TEMPLATES_DIR", .user_dir = true, .suffix = null }, .default = "/Templates" },
-        .desktop = XdgFolderSpec{ .env = .{ .name = "XDG_DESKTOP_DIR", .user_dir = true, .suffix = null }, .default = "/Desktop" },
-        .downloads = XdgFolderSpec{ .env = .{ .name = "XDG_DOWNLOAD_DIR", .user_dir = true, .suffix = null }, .default = "/Downloads" },
-        .public = XdgFolderSpec{ .env = .{ .name = "XDG_PUBLICSHARE_DIR", .user_dir = true, .suffix = null }, .default = "/Public" },
-        .fonts = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = "/fonts" }, .default = "/.local/share/fonts" },
-        .app_menu = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = "/applications" }, .default = "/.local/share/applications" },
-        .cache = XdgFolderSpec{ .env = .{ .name = "XDG_CACHE_HOME", .user_dir = false, .suffix = null }, .default = "/.cache" },
-        .roaming_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .user_dir = false, .suffix = null }, .default = "/.config" },
-        .local_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .user_dir = false, .suffix = null }, .default = "/.config" },
-        .data = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = null }, .default = "/.local/share" },
-        .runtime = XdgFolderSpec{ .env = .{ .name = "XDG_RUNTIME_DIR", .user_dir = false, .suffix = null }, .default = null },
-    };
+const xdg_folder_spec = KnownFolderConfig(XdgFolderSpec){
+    .home = XdgFolderSpec{ .env = .{ .name = "HOME", .user_dir = false, .suffix = null }, .default = null },
+    .documents = XdgFolderSpec{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .user_dir = true, .suffix = null }, .default = "/Documents" },
+    .pictures = XdgFolderSpec{ .env = .{ .name = "XDG_PICTURES_DIR", .user_dir = true, .suffix = null }, .default = "/Pictures" },
+    .music = XdgFolderSpec{ .env = .{ .name = "XDG_MUSIC_DIR", .user_dir = true, .suffix = null }, .default = "/Music" },
+    .videos = XdgFolderSpec{ .env = .{ .name = "XDG_VIDEOS_DIR", .user_dir = true, .suffix = null }, .default = "/Videos" },
+    .desktop = XdgFolderSpec{ .env = .{ .name = "XDG_DESKTOP_DIR", .user_dir = true, .suffix = null }, .default = "/Desktop" },
+    .downloads = XdgFolderSpec{ .env = .{ .name = "XDG_DOWNLOAD_DIR", .user_dir = true, .suffix = null }, .default = "/Downloads" },
+    .public = XdgFolderSpec{ .env = .{ .name = "XDG_PUBLICSHARE_DIR", .user_dir = true, .suffix = null }, .default = "/Public" },
+    .fonts = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = "/fonts" }, .default = "/.local/share/fonts" },
+    .app_menu = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = "/applications" }, .default = "/.local/share/applications" },
+    .cache = XdgFolderSpec{ .env = .{ .name = "XDG_CACHE_HOME", .user_dir = false, .suffix = null }, .default = "/.cache" },
+    .roaming_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .user_dir = false, .suffix = null }, .default = "/.config" },
+    .local_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .user_dir = false, .suffix = null }, .default = "/.config" },
+    .data = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = null }, .default = "/.local/share" },
+    .runtime = XdgFolderSpec{ .env = .{ .name = "XDG_RUNTIME_DIR", .user_dir = false, .suffix = null }, .default = null },
+};
+
+const mac_folder_spec = KnownFolderConfig(MacFolderSpec){
+    .home = MacFolderSpec{ .suffix = null },
+    .documents = MacFolderSpec{ .suffix = "Documents" },
+    .pictures = MacFolderSpec{ .suffix = "Pictures" },
+    .music = MacFolderSpec{ .suffix = "Music" },
+    .videos = MacFolderSpec{ .suffix = "Movies" },
+    .desktop = MacFolderSpec{ .suffix = "Desktop" },
+    .downloads = MacFolderSpec{ .suffix = "Downloads" },
+    .public = MacFolderSpec{ .suffix = "Public" },
+    .fonts = MacFolderSpec{ .suffix = "Library/Fonts" },
+    .app_menu = MacFolderSpec{ .suffix = "Applications" },
+    .cache = MacFolderSpec{ .suffix = "Library/Caches" },
+    .roaming_configuration = MacFolderSpec{ .suffix = "Library/Preferences" },
+    .local_configuration = MacFolderSpec{ .suffix = "Library/Application Support" },
+    .data = MacFolderSpec{ .suffix = "Library/Application Support" },
+    .runtime = MacFolderSpec{ .suffix = "Library/Application Support" },
 };
 
 // Ref decls
