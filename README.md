@@ -52,35 +52,32 @@
 
 ## API
 ```zig
-pub const SpecialFolder = enum {
-  home,
-  documents,
-  pictures,
-  music,
-  videos,
-  templates,
-  desktop,
-  downloads,
-  public,
-  fonts,
-  app_menu,
-  cache,
-  roaming_configuration,
-  local_configuration,
-  data,
-  system_folder,
-  runtime,
+pub const KnownFolder = enum {
+    home,
+    documents,
+    pictures,
+    music,
+    videos,
+    templates,
+    desktop,
+    downloads,
+    public,
+    fonts,
+    app_menu,
+    cache,
+    roaming_configuration,
+    local_configuration,
+    data,
+    runtime,
 };
 
 // Explicitly define possible errors to make it clearer what callers need to handle
-pub const Error = error {
-// TODO: fill this in
-	OutOfMemory,
-};
+pub const Error = error{ ParseError, OutOfMemory };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?std.fs.Dir;
+pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir;
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: *std.mem.Allocator, folder: SpecialFolder) Error!?[]const u8;
+pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]const u8;
+
 ```

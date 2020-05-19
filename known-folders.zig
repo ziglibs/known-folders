@@ -20,7 +20,6 @@ pub const KnownFolder = enum {
 };
 
 // Explicitly define possible errors to make it clearer what callers need to handle
-// TODO: fill this in
 pub const Error = error{ ParseError, OutOfMemory };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
