@@ -24,7 +24,7 @@ pub const KnownFolder = enum {
 pub const Error = error{OutOfMemory};
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
+pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || std.fs.File.OpenError || std.os.ReadError || Error)!?std.fs.Dir {
     var path_or_null = try getPath(allocator, folder);
     if (path_or_null) |path| {
         defer allocator.free(path);
@@ -36,7 +36,7 @@ pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
+pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) (std.fs.Dir.OpenError || std.fs.File.OpenError || std.os.ReadError || Error)!?[]const u8 {
 
     // used for temporary allocations
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -94,8 +94,51 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
 
         // Assume unix derivatives with XDG
         else => {
-            // TODO: Implement
-            @panic("not implemented yet");
+            const folder_spec = xdg_folder_spec.get(folder);
+
+            var env_opt = std.os.getenv(folder_spec.env.name);
+
+            if (env_opt == null and folder_spec.env.user_dir) {
+                // TODO: add caching so we only need to read once in a run
+                // TODO: maybe parse this in a saner way?
+                if (try open(&arena.allocator, .local_configuration, .{})) |config_dir| {
+                    const user_dirs = try config_dir.openFile("user-dirs.dirs", .{});
+                    var read: [1024 * 8]u8 = undefined;
+                    _ = try user_dirs.inStream().readAll(&read);
+                    var line_it = std.mem.split(&read, "\n");
+                    while (line_it.next()) |line| {
+                        if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
+                            var split = std.mem.split(line, "=");
+                            _ = split.next();
+
+                            // "$HOME/123" -> /123
+                            const rest = split.rest();
+                            var subdir = rest[6 .. rest.len - 1];
+                            if (std.os.getenv("HOME")) |home| {
+                                env_opt = try std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir });
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (env_opt) |env| {
+                if (folder_spec.env.suffix) |suffix| {
+                    return try std.mem.concat(allocator, u8, &[_][]const u8{ env, suffix });
+                } else {
+                    // TODO: this allocation is not necessary but else this cannot be freed by the allocator
+                    return try std.mem.dupe(allocator, u8, env);
+                }
+            } else if (folder_spec.default) |default| {
+                if (std.os.getenv("HOME")) |home| {
+                    return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default });
+                } else {
+                    return null;
+                }
+            } else {
+                return null;
+            }
         },
     }
     unreachable;
@@ -114,6 +157,7 @@ const WindowsFolderSpec = union(enum) {
 const XdgFolderSpec = struct {
     env: struct {
         name: []const u8,
+        user_dir: bool,
         suffix: ?[]const u8,
     },
     default: ?[]const u8,
@@ -181,22 +225,22 @@ const xdg_folder_spec = comptime blk: {
     // workaround for zig eval branch quota when parsing the GUIDs
     @setEvalBranchQuota(10_000);
     break :blk KnownFolderConfig(XdgFolderSpec){
-        .home = XdgFolderSpec{ .env = .{ .name = "HOME", .suffix = null }, .default = null },
-        .documents = XdgFolderSpec{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .suffix = null }, .default = "Documents" },
-        .pictures = XdgFolderSpec{ .env = .{ .name = "XDG_PICTURES_DIR", .suffix = null }, .default = "Pictures" },
-        .music = XdgFolderSpec{ .env = .{ .name = "XDG_MUSIC_DIR", .suffix = null }, .default = "Music" },
-        .videos = XdgFolderSpec{ .env = .{ .name = "XDG_VIDEOS_DIR", .suffix = null }, .default = "Videos" },
-        .templates = XdgFolderSpec{ .env = .{ .name = "XDG_TEMPLATES_DIR", .suffix = null }, .default = "Templates" },
-        .desktop = XdgFolderSpec{ .env = .{ .name = "XDG_DESKTOP_DIR", .suffix = null }, .default = "Desktop" },
-        .downloads = XdgFolderSpec{ .env = .{ .name = "XDG_DOWNLOAD_DIR", .suffix = null }, .default = "Downloads" },
-        .public = XdgFolderSpec{ .env = .{ .name = "XDG_PUBLICSHARE_DIR", .suffix = null }, .default = "Public" },
-        .fonts = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .suffix = "fonts" }, .default = ".local/share/fonts" },
-        .app_menu = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .suffix = "applications" }, .default = ".local/share/applications" },
-        .cache = XdgFolderSpec{ .env = .{ .name = "XDG_CACHE_HOME", .suffix = null }, .default = ".cache" },
-        .roaming_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .suffix = null }, .default = ".config" },
-        .local_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .suffix = null }, .default = ".config" },
-        .data = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .suffix = null }, .default = ".local/share" },
-        .runtime = XdgFolderSpec{ .env = .{ .name = "XDG_RUNTIME_DIR", .suffix = null }, .default = null },
+        .home = XdgFolderSpec{ .env = .{ .name = "HOME", .user_dir = false, .suffix = null }, .default = null },
+        .documents = XdgFolderSpec{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .user_dir = true, .suffix = null }, .default = "/Documents" },
+        .pictures = XdgFolderSpec{ .env = .{ .name = "XDG_PICTURES_DIR", .user_dir = true, .suffix = null }, .default = "/Pictures" },
+        .music = XdgFolderSpec{ .env = .{ .name = "XDG_MUSIC_DIR", .user_dir = true, .suffix = null }, .default = "/Music" },
+        .videos = XdgFolderSpec{ .env = .{ .name = "XDG_VIDEOS_DIR", .user_dir = true, .suffix = null }, .default = "/Videos" },
+        .templates = XdgFolderSpec{ .env = .{ .name = "XDG_TEMPLATES_DIR", .user_dir = true, .suffix = null }, .default = "/Templates" },
+        .desktop = XdgFolderSpec{ .env = .{ .name = "XDG_DESKTOP_DIR", .user_dir = true, .suffix = null }, .default = "/Desktop" },
+        .downloads = XdgFolderSpec{ .env = .{ .name = "XDG_DOWNLOAD_DIR", .user_dir = true, .suffix = null }, .default = "/Downloads" },
+        .public = XdgFolderSpec{ .env = .{ .name = "XDG_PUBLICSHARE_DIR", .user_dir = true, .suffix = null }, .default = "/Public" },
+        .fonts = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = "/fonts" }, .default = "/.local/share/fonts" },
+        .app_menu = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = "/applications" }, .default = "/.local/share/applications" },
+        .cache = XdgFolderSpec{ .env = .{ .name = "XDG_CACHE_HOME", .user_dir = false, .suffix = null }, .default = "/.cache" },
+        .roaming_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .user_dir = false, .suffix = null }, .default = "/.config" },
+        .local_configuration = XdgFolderSpec{ .env = .{ .name = "XDG_CONFIG_HOME", .user_dir = false, .suffix = null }, .default = "/.config" },
+        .data = XdgFolderSpec{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = null }, .default = "/.local/share" },
+        .runtime = XdgFolderSpec{ .env = .{ .name = "XDG_RUNTIME_DIR", .user_dir = false, .suffix = null }, .default = null },
     };
 };
 
@@ -221,7 +265,10 @@ test "query each known folders" {
 
 test "open each known folders" {
     inline for (std.meta.fields(KnownFolder)) |fld| {
-        var dir_or_null = try open(std.testing.allocator, @field(KnownFolder, fld.name), .{ .iterate = false, .access_sub_paths = true });
+        var dir_or_null = open(std.testing.allocator, @field(KnownFolder, fld.name), .{ .iterate = false, .access_sub_paths = true }) catch |e| switch (e) {
+            error.FileNotFound => return,
+            else => return e,
+        };
         if (dir_or_null) |*dir| {
             dir.close();
         }
