@@ -24,7 +24,7 @@ pub const KnownFolder = enum {
 pub const Error = error{OutOfMemory};
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || std.fs.File.OpenError || std.os.ReadError || Error)!?std.fs.Dir {
+pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
     var path_or_null = try getPath(allocator, folder);
     if (path_or_null) |path| {
         defer allocator.free(path);
@@ -36,7 +36,7 @@ pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) (std.fs.Dir.OpenError || std.fs.File.OpenError || std.os.ReadError || Error)!?[]const u8 {
+pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
 
     // used for temporary allocations
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -101,23 +101,25 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) (std.fs.Dir.O
             if (env_opt == null and folder_spec.env.user_dir) {
                 // TODO: add caching so we only need to read once in a run
                 // TODO: maybe parse this in a saner way?
-                if (try open(&arena.allocator, .local_configuration, .{})) |config_dir| {
-                    const user_dirs = try config_dir.openFile("user-dirs.dirs", .{});
-                    var read: [1024 * 8]u8 = undefined;
-                    _ = try user_dirs.inStream().readAll(&read);
-                    var line_it = std.mem.split(&read, "\n");
-                    while (line_it.next()) |line| {
-                        if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
-                            var split = std.mem.split(line, "=");
-                            _ = split.next();
+                if (open(&arena.allocator, .local_configuration, .{}) catch null) |config_dir| {
+                    if (std.os.getenv("HOME")) |home| {
+                        if (config_dir.openFile("user-dirs.dirs", .{}) catch null) |user_dirs| {
+                            var read: [1024 * 8]u8 = undefined;
+                            if (user_dirs.inStream().readAll(&read) catch null) |_| {
+                                var line_it = std.mem.split(&read, "\n");
+                                while (line_it.next()) |line| {
+                                    if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
+                                        var split = std.mem.split(line, "=");
+                                        _ = split.next();
 
-                            // "$HOME/123" -> /123
-                            const rest = split.rest();
-                            var subdir = rest[6 .. rest.len - 1];
-                            if (std.os.getenv("HOME")) |home| {
-                                env_opt = try std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir });
+                                        // "$HOME/123" -> /123
+                                        const rest = split.rest();
+                                        var subdir = rest[6 .. rest.len - 1];
+                                        env_opt = std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir }) catch null;
+                                    }
+                                    break;
+                                }
                             }
-                            break;
                         }
                     }
                 }
