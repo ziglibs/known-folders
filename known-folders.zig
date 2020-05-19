@@ -274,8 +274,3 @@ test "open each known folders" {
         }
     }
 }
-
-test "query each xdg known folders" {
-    // TODO: Implement this test
-    _ = xdg_folder_spec;
-}
