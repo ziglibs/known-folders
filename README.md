@@ -43,9 +43,9 @@
 | Fonts                 | FOLDERID_Fonts           | XDG_DATA_HOME/fonts        | HOME/Library/Fonts |
 | App Menu              | FOLDERID_StartMenu       | XDG_DATA_HOME/applications | HOME/Applications |
 | Cache                 | %LOCALAPPDATA%/Temp      | XDG_CACHE_HOME             | HOME/Library/Caches |
-| Roaming Configuration | %APPDATA%	               | XDG_CONFIG_HOME            | HOME/Library/Preferences |
+| Roaming Configuration | %APPDATA%                | XDG_CONFIG_HOME            | HOME/Library/Preferences |
 | Local Configuration   | %LOCALAPPDATA%           | XDG_CONFIG_HOME            | HOME/Library/Application Support |
-| Data                  | %APPDATA%                | XDG_DATA_HOME              | HOME/Library/Application Support | 
+| Data                  | %APPDATA%                | XDG_DATA_HOME              | HOME/Library/Application Support |
 | Runtime               | %LOCALAPPDATA%/Temp      | XDG_RUNTIME_DIR            | HOME/Library/Application Support |
 
 ## API
@@ -66,9 +66,9 @@ pub const KnownFolder = enum {
     local_configuration,
     data,
     runtime,
+    executable_dir,
 };
 
-// Explicitly define possible errors to make it clearer what callers need to handle
 pub const Error = error{ ParseError, OutOfMemory };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
@@ -76,5 +76,4 @@ pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
 pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]const u8;
-
 ```
