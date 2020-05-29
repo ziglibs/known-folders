@@ -129,33 +129,28 @@ fn getPathXdg(allocator: *std.mem.Allocator, arena: *std.heap.ArenaAllocator, fo
 
     var env_opt = std.os.getenv(folder_spec.env.name);
 
-    if (env_opt == null and folder_spec.env.user_dir) {
-        // TODO: add caching so we only need to read once in a run
-        // TODO: maybe parse this in a saner way?
-        if (open(&arena.allocator, .local_configuration, .{}) catch null) |config_dir| {
-            if (std.os.getenv("HOME")) |home| {
-                if (config_dir.openFile("user-dirs.dirs", .{}) catch null) |user_dirs| {
-                    var read: [1024 * 8]u8 = undefined;
-                    if (user_dirs.readAll(&read) catch null) |_| {
-                        // 7 corresponds to ="$HOME
-                        const start = folder_spec.env.name.len + 7;
+    // TODO: add caching so we only need to read once in a run
+    if (env_opt == null and folder_spec.env.user_dir) block: {
+        const config_dir = open(&arena.allocator, .local_configuration, .{}) catch null orelse break :block;
+        const home = std.os.getenv("HOME") orelse break :block;
+        const user_dirs = config_dir.openFile("user-dirs.dirs", .{}) catch null orelse break :block;
 
-                        var line_it = std.mem.split(&read, "\n");
-                        while (line_it.next()) |line| {
-                            if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
-                                const end = line.len - 1;
-                                if (start >= end) {
-                                    return error.ParseError;
-                                }
+        var read: [1024 * 8]u8 = undefined;
+        _ = user_dirs.readAll(&read) catch null orelse break :block;
+        const start = folder_spec.env.name.len + "=\"$HOME".len;
 
-                                var subdir = line[start..end];
-
-                                env_opt = std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir }) catch null;
-                                break;
-                            }
-                        }
-                    }
+        var line_it = std.mem.split(&read, "\n");
+        while (line_it.next()) |line| {
+            if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
+                const end = line.len - 1;
+                if (start >= end) {
+                    return error.ParseError;
                 }
+
+                var subdir = line[start..end];
+
+                env_opt = std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir }) catch null;
+                break;
             }
         }
     }
