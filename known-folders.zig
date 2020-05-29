@@ -1,4 +1,5 @@
 const std = @import("std");
+const root = @import("root");
 
 pub const KnownFolder = enum {
     home,
@@ -21,6 +22,10 @@ pub const KnownFolder = enum {
 
 // Explicitly define possible errors to make it clearer what callers need to handle
 pub const Error = error{ ParseError, OutOfMemory };
+
+pub const KnownFolderConfig = struct {
+    xdg_on_mac: bool = true,
+};
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
 pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
@@ -93,6 +98,10 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
             }
         },
         .macosx => {
+            if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_on_mac) {
+                return getPathXdg(allocator, &arena, folder);
+            }
+
             const folder_spec = mac_folder_spec.get(folder);
 
             const home_dir = if (std.os.getenv("HOME")) |home|
@@ -109,60 +118,64 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
 
         // Assume unix derivatives with XDG
         else => {
-            const folder_spec = xdg_folder_spec.get(folder);
+            return getPathXdg(allocator, &arena, folder);
+        },
+    }
+    unreachable;
+}
 
-            var env_opt = std.os.getenv(folder_spec.env.name);
+fn getPathXdg(allocator: *std.mem.Allocator, arena: *std.heap.ArenaAllocator, folder: KnownFolder) Error!?[]const u8 {
+    const folder_spec = xdg_folder_spec.get(folder);
 
-            if (env_opt == null and folder_spec.env.user_dir) {
-                // TODO: add caching so we only need to read once in a run
-                // TODO: maybe parse this in a saner way?
-                if (open(&arena.allocator, .local_configuration, .{}) catch null) |config_dir| {
-                    if (std.os.getenv("HOME")) |home| {
-                        if (config_dir.openFile("user-dirs.dirs", .{}) catch null) |user_dirs| {
-                            var read: [1024 * 8]u8 = undefined;
-                            if (user_dirs.readAll(&read) catch null) |_| {
-                                // 7 corresponds to ="$HOME
-                                const start = folder_spec.env.name.len + 7;
+    var env_opt = std.os.getenv(folder_spec.env.name);
 
-                                var line_it = std.mem.split(&read, "\n");
-                                while (line_it.next()) |line| {
-                                    if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
-                                        const end = line.len - 1;
-                                        if (start >= end) {
-                                            return error.ParseError;
-                                        }
+    if (env_opt == null and folder_spec.env.user_dir) {
+        // TODO: add caching so we only need to read once in a run
+        // TODO: maybe parse this in a saner way?
+        if (open(&arena.allocator, .local_configuration, .{}) catch null) |config_dir| {
+            if (std.os.getenv("HOME")) |home| {
+                if (config_dir.openFile("user-dirs.dirs", .{}) catch null) |user_dirs| {
+                    var read: [1024 * 8]u8 = undefined;
+                    if (user_dirs.readAll(&read) catch null) |_| {
+                        // 7 corresponds to ="$HOME
+                        const start = folder_spec.env.name.len + 7;
 
-                                        var subdir = line[start..end];
-
-                                        env_opt = std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir }) catch null;
-                                        break;
-                                    }
+                        var line_it = std.mem.split(&read, "\n");
+                        while (line_it.next()) |line| {
+                            if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
+                                const end = line.len - 1;
+                                if (start >= end) {
+                                    return error.ParseError;
                                 }
+
+                                var subdir = line[start..end];
+
+                                env_opt = std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir }) catch null;
+                                break;
                             }
                         }
                     }
                 }
             }
-
-            if (env_opt) |env| {
-                if (folder_spec.env.suffix) |suffix| {
-                    return try std.mem.concat(allocator, u8, &[_][]const u8{ env, suffix });
-                } else {
-                    // TODO: this allocation is not necessary but else this cannot be freed by the allocator
-                    return try std.mem.dupe(allocator, u8, env);
-                }
-            } else if (folder_spec.default) |default| {
-                if (std.os.getenv("HOME")) |home| {
-                    return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default });
-                } else {
-                    return null;
-                }
-            } else {
-                return null;
-            }
-        },
+        }
     }
-    unreachable;
+
+    if (env_opt) |env| {
+        if (folder_spec.env.suffix) |suffix| {
+            return try std.mem.concat(allocator, u8, &[_][]const u8{ env, suffix });
+        } else {
+            // TODO: this allocation is not necessary but else this cannot be freed by the allocator
+            return try std.mem.dupe(allocator, u8, env);
+        }
+    } else if (folder_spec.default) |default| {
+        if (std.os.getenv("HOME")) |home| {
+            return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default });
+        } else {
+            return null;
+        }
+    } else {
+        return null;
+    }
 }
 
 /// Contains the GUIDs for each available known-folder on windows
@@ -191,7 +204,7 @@ const MacFolderSpec = struct {
 
 /// This returns a struct type with one field per KnownFolder of type `T`.
 /// used for storing different config data per field
-fn KnownFolderConfig(comptime T: type) type {
+fn KnownFolderSpec(comptime T: type) type {
     return struct {
         const Self = @This();
 
@@ -225,7 +238,7 @@ fn KnownFolderConfig(comptime T: type) type {
 const windows_folder_spec = comptime blk: {
     // workaround for zig eval branch quota when parsing the GUIDs
     @setEvalBranchQuota(10_000);
-    break :blk KnownFolderConfig(WindowsFolderSpec){
+    break :blk KnownFolderSpec(WindowsFolderSpec){
         .home = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{5E6C858F-0E22-4760-9AFE-EA3317B67173}") }, // FOLDERID_Profile
         .documents = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{FDD39AD0-238F-46AF-ADB4-6C85480369C7}") }, // FOLDERID_Documents
         .pictures = WindowsFolderSpec{ .by_guid = std.os.windows.GUID.parse("{33E28130-4E1E-4676-835A-98395C3BC3BB}") }, // FOLDERID_Pictures
@@ -245,7 +258,7 @@ const windows_folder_spec = comptime blk: {
 };
 
 /// Stores how to find each known folder in xdg.
-const xdg_folder_spec = KnownFolderConfig(XdgFolderSpec){
+const xdg_folder_spec = KnownFolderSpec(XdgFolderSpec){
     .home = XdgFolderSpec{ .env = .{ .name = "HOME", .user_dir = false, .suffix = null }, .default = null },
     .documents = XdgFolderSpec{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .user_dir = true, .suffix = null }, .default = "/Documents" },
     .pictures = XdgFolderSpec{ .env = .{ .name = "XDG_PICTURES_DIR", .user_dir = true, .suffix = null }, .default = "/Pictures" },
@@ -263,7 +276,7 @@ const xdg_folder_spec = KnownFolderConfig(XdgFolderSpec){
     .runtime = XdgFolderSpec{ .env = .{ .name = "XDG_RUNTIME_DIR", .user_dir = false, .suffix = null }, .default = null },
 };
 
-const mac_folder_spec = KnownFolderConfig(MacFolderSpec){
+const mac_folder_spec = KnownFolderSpec(MacFolderSpec){
     .home = MacFolderSpec{ .suffix = null },
     .documents = MacFolderSpec{ .suffix = "Documents" },
     .pictures = MacFolderSpec{ .suffix = "Pictures" },
