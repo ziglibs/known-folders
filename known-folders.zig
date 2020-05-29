@@ -24,7 +24,7 @@ pub const KnownFolder = enum {
 pub const Error = error{ ParseError, OutOfMemory };
 
 pub const KnownFolderConfig = struct {
-    xdg_on_mac: bool = true,
+    xdg_on_mac: bool = false,
 };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
