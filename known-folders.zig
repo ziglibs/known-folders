@@ -112,7 +112,7 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
             if (folder_spec.suffix) |suffix| {
                 return try std.fs.path.join(allocator, &[_][]const u8{ home_dir, suffix });
             } else {
-                return try std.mem.dupe(allocator, u8, home_dir);
+                return try allocator.dupe(u8, home_dir);
             }
         },
 
@@ -161,7 +161,7 @@ fn getPathXdg(allocator: *std.mem.Allocator, arena: *std.heap.ArenaAllocator, fo
             return try std.mem.concat(allocator, u8, &[_][]const u8{ env, suffix });
         } else {
             // TODO: this allocation is not necessary but else this cannot be freed by the allocator
-            return try std.mem.dupe(allocator, u8, env);
+            return try allocator.dupe(u8, env);
         }
     } else if (folder_spec.default) |default| {
         if (std.os.getenv("HOME")) |home| {
