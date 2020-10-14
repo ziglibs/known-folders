@@ -97,7 +97,7 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
                 },
             }
         },
-        .macosx => {
+        .macos => {
             if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_on_mac) {
                 return getPathXdg(allocator, &arena, folder);
             }
@@ -193,7 +193,7 @@ const XdgFolderSpec = struct {
     default: ?[]const u8,
 };
 
-/// Contains the folder items for MacOS X
+/// Contains the folder items for macOS
 const MacFolderSpec = struct {
     suffix: ?[]const u8,
 };
