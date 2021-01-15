@@ -303,7 +303,7 @@ test "query each known folders" {
         var path_or_null = try getPath(std.testing.allocator, @field(KnownFolder, fld.name));
         if (path_or_null) |path| {
             // TODO: Remove later
-            std.debug.warn("{} => '{}'\n", .{ fld.name, path });
+            std.debug.print("{s} => '{s}'\n", .{ fld.name, path });
             std.testing.allocator.free(path);
         }
     }
