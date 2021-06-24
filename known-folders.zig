@@ -238,7 +238,7 @@ fn KnownFolderSpec(comptime T: type) type {
 }
 
 /// Stores how to find each known folder on windows.
-const windows_folder_spec = comptime blk: {
+const windows_folder_spec = blk: {
     // workaround for zig eval branch quota when parsing the GUIDs
     @setEvalBranchQuota(10_000);
     break :blk KnownFolderSpec(WindowsFolderSpec){
