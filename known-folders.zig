@@ -103,7 +103,7 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
                 return getPathXdg(allocator, &arena, folder);
             }
 
-            switch(mac_folder_spec.get(folder)) {
+            switch (mac_folder_spec.get(folder)) {
                 .absolute => |abs| {
                     return try allocator.dupe(u8, abs);
                 },
