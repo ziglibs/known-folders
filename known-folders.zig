@@ -138,7 +138,14 @@ fn getPathXdg(allocator: *std.mem.Allocator, arena: *std.heap.ArenaAllocator, fo
 
     // TODO: add caching so we only need to read once in a run
     if (env_opt == null and folder_spec.env.user_dir) block: {
-        const config_dir_path = getPathXdg(&arena.allocator, arena, .local_configuration) catch null orelse break :block;
+        const config_dir_path = if (std.io.is_async) blk: {
+            var frame = arena.allocator.create(@Frame(getPathXdg)) catch break :block;
+            _ = @asyncCall(frame, {}, getPathXdg, .{ &arena.allocator, arena, .local_configuration });
+            break :blk (await frame) catch null orelse break :block;
+        } else blk: {
+            break :blk getPathXdg(&arena.allocator, arena, .local_configuration) catch null orelse break :block;
+        };
+
         const config_dir = std.fs.cwd().openDir(config_dir_path, .{}) catch break :block;
         const home = std.os.getenv("HOME") orelse break :block;
         const user_dirs = config_dir.openFile("user-dirs.dirs", .{}) catch null orelse break :block;
