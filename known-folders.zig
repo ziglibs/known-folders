@@ -30,7 +30,7 @@ pub const KnownFolderConfig = struct {
 };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
+pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
     var path_or_null = try getPath(allocator, folder);
     if (path_or_null) |path| {
         defer allocator.free(path);
@@ -42,7 +42,7 @@ pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
+pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
     if (folder == .executable_dir) {
         return std.fs.selfExeDirPathAlloc(allocator) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -83,7 +83,7 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
                 },
                 .by_env => |env_path| {
                     if (env_path.subdir) |sub_dir| {
-                        const root_path = std.process.getEnvVarOwned(&arena.allocator, env_path.env_var) catch |err| switch (err) {
+                        const root_path = std.process.getEnvVarOwned(arena.allocator(), env_path.env_var) catch |err| switch (err) {
                             error.EnvironmentVariableNotFound => return null,
                             error.InvalidUtf8 => return null,
                             error.OutOfMemory => |e| return e,
@@ -131,7 +131,7 @@ pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]cons
     unreachable;
 }
 
-fn getPathXdg(allocator: *std.mem.Allocator, arena: *std.heap.ArenaAllocator, folder: KnownFolder) Error!?[]const u8 {
+fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, folder: KnownFolder) Error!?[]const u8 {
     const folder_spec = xdg_folder_spec.get(folder);
 
     var env_opt = std.os.getenv(folder_spec.env.name);
@@ -140,10 +140,10 @@ fn getPathXdg(allocator: *std.mem.Allocator, arena: *std.heap.ArenaAllocator, fo
     if (env_opt == null and folder_spec.env.user_dir) block: {
         const config_dir_path = if (std.io.is_async) blk: {
             var frame = arena.allocator.create(@Frame(getPathXdg)) catch break :block;
-            _ = @asyncCall(frame, {}, getPathXdg, .{ &arena.allocator, arena, .local_configuration });
+            _ = @asyncCall(frame, {}, getPathXdg, .{ arena.allocator(), arena, .local_configuration });
             break :blk (await frame) catch null orelse break :block;
         } else blk: {
-            break :blk getPathXdg(&arena.allocator, arena, .local_configuration) catch null orelse break :block;
+            break :blk getPathXdg(arena.allocator(), arena, .local_configuration) catch null orelse break :block;
         };
 
         const config_dir = std.fs.cwd().openDir(config_dir_path, .{}) catch break :block;
@@ -164,7 +164,7 @@ fn getPathXdg(allocator: *std.mem.Allocator, arena: *std.heap.ArenaAllocator, fo
 
                 var subdir = line[start..end];
 
-                env_opt = try std.mem.concat(&arena.allocator, u8, &[_][]const u8{ home, subdir });
+                env_opt = try std.mem.concat(arena.allocator(), u8, &[_][]const u8{ home, subdir });
                 break;
             }
         }
