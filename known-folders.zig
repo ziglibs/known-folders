@@ -26,7 +26,7 @@ pub const KnownFolder = enum {
 pub const Error = error{ ParseError, OutOfMemory };
 
 pub const KnownFolderConfig = struct {
-    xdg_force_default: bool = true,
+    xdg_force_default: bool = false,
     xdg_on_mac: bool = false,
 };
 
