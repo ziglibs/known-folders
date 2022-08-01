@@ -26,6 +26,7 @@ pub const KnownFolder = enum {
 pub const Error = error{ ParseError, OutOfMemory };
 
 pub const KnownFolderConfig = struct {
+    xdg_force_default: bool = true,
     xdg_on_mac: bool = false,
 };
 
@@ -135,6 +136,17 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
     const folder_spec = xdg_folder_spec.get(folder);
 
     var env_opt = std.os.getenv(folder_spec.env.name);
+
+    if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_force_default) {
+        if(folder_spec.default) |default| {
+            if (default[0] == '~') {
+                const home = std.os.getenv("HOME") orelse return null;
+                return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default[1..] });
+            } else {
+                return try allocator.dupe(u8, default);
+            }
+        }
+    }
 
     // TODO: add caching so we only need to read once in a run
     if (env_opt == null and folder_spec.env.user_dir) block: {
