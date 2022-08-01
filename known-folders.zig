@@ -176,7 +176,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
         } else {
             if(std.mem.eql(u8,folder_spec.env.name, "XDG_CONFIG_DIRS")) {
                 var iter = std.mem.split(u8,env, ":");
-                return iter.next() orelse "";
+                return try allocator.dupe(u8, iter.next() orelse "");
             } else {
                 return try allocator.dupe(u8, env);
             }
