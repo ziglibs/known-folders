@@ -45,6 +45,7 @@ pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.
 /// Returns the path to the folder or, if the folder does not exist, `null`.
 pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
     if (folder == .executable_dir) {
+        if (builtin.os.tag == .wasi) return null;
         return std.fs.selfExeDirPathAlloc(allocator) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => null,
