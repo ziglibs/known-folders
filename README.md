@@ -22,6 +22,7 @@ pub const KnownFolder = enum {
     cache,
     roaming_configuration,
     local_configuration,
+    global_configuration,
     data,
     runtime,
     executable_dir,
@@ -30,14 +31,15 @@ pub const KnownFolder = enum {
 pub const Error = error{ ParseError, OutOfMemory };
 
 pub const KnownFolderConfig = struct {
+    xdg_force_default: bool = false,
     xdg_on_mac: bool = false,
 };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: *std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir;
+pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir;
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: *std.mem.Allocator, folder: KnownFolder) Error!?[]const u8;
+pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8;
 ```
 
 ## Configuration
