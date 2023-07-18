@@ -136,8 +136,6 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
 fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, folder: KnownFolder) Error!?[]const u8 {
     const folder_spec = xdg_folder_spec.get(folder);
 
-    var env_opt = std.os.getenv(folder_spec.env.name);
-
     if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_force_default) {
         if (folder_spec.default) |default| {
             if (default[0] == '~') {
@@ -149,22 +147,26 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
         }
     }
 
-    // TODO: add caching so we only need to read once in a run
-    if (env_opt == null and folder_spec.env.user_dir) block: {
+    const env_opt = env_opt: {
+        if (std.os.getenv(folder_spec.env.name)) |env_opt| break :env_opt env_opt;
+
+        if (!folder_spec.env.user_dir) break :env_opt null;
+
+        // TODO: add caching so we only need to read once in a run
         const config_dir_path = if (std.io.is_async) blk: {
-            var frame = arena.allocator().create(@Frame(getPathXdg)) catch break :block;
+            var frame = arena.allocator().create(@Frame(getPathXdg)) catch break :env_opt null;
             _ = @asyncCall(frame, {}, getPathXdg, .{ arena.allocator(), arena, .local_configuration });
-            break :blk (await frame) catch null orelse break :block;
+            break :blk (await frame) catch null orelse break :env_opt null;
         } else blk: {
-            break :blk getPathXdg(arena.allocator(), arena, .local_configuration) catch null orelse break :block;
+            break :blk getPathXdg(arena.allocator(), arena, .local_configuration) catch null orelse break :env_opt null;
         };
 
-        const config_dir = std.fs.cwd().openDir(config_dir_path, .{}) catch break :block;
-        const home = std.os.getenv("HOME") orelse break :block;
-        const user_dirs = config_dir.openFile("user-dirs.dirs", .{}) catch null orelse break :block;
+        const config_dir = std.fs.cwd().openDir(config_dir_path, .{}) catch break :env_opt null;
+        const home = std.os.getenv("HOME") orelse break :env_opt null;
+        const user_dirs = config_dir.openFile("user-dirs.dirs", .{}) catch null orelse break :env_opt null;
 
         var read: [1024 * 8]u8 = undefined;
-        _ = user_dirs.readAll(&read) catch null orelse break :block;
+        _ = user_dirs.readAll(&read) catch null orelse break :env_opt null;
         const start = folder_spec.env.name.len + "=\"$HOME".len;
 
         var line_it = std.mem.split(u8, &read, "\n");
@@ -177,11 +179,11 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
 
                 var subdir = line[start..end];
 
-                env_opt = try std.mem.concat(arena.allocator(), u8, &[_][]const u8{ home, subdir });
-                break;
+                break :env_opt try std.mem.concat(arena.allocator(), u8, &[_][]const u8{ home, subdir });
             }
         }
-    }
+        break :env_opt null;
+    };
 
     if (env_opt) |env| {
         if (folder_spec.env.suffix) |suffix| {
