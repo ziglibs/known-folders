@@ -139,7 +139,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
     if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_force_default) {
         if (folder_spec.default) |default| {
             if (default[0] == '~') {
-                const home = std.os.getenv("HOME") orelse return null;
+                const home = std.process.getEnvVarOwned(arena.allocator(), "HOME") catch null orelse return null;
                 return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default[1..] });
             } else {
                 return try allocator.dupe(u8, default);
@@ -148,7 +148,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
     }
 
     const env_opt = env_opt: {
-        if (std.os.getenv(folder_spec.env.name)) |env_opt| break :env_opt env_opt;
+        if (std.process.getEnvVarOwned(arena.allocator(), folder_spec.env.name) catch null) |env_opt| break :env_opt env_opt;
 
         if (!folder_spec.env.user_dir) break :env_opt null;
 
@@ -162,7 +162,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
         };
 
         const config_dir = std.fs.cwd().openDir(config_dir_path, .{}) catch break :env_opt null;
-        const home = std.os.getenv("HOME") orelse break :env_opt null;
+        const home = std.process.getEnvVarOwned(arena.allocator(), "HOME") catch null orelse break :env_opt null;
         const user_dirs = config_dir.openFile("user-dirs.dirs", .{}) catch null orelse break :env_opt null;
 
         var read: [1024 * 8]u8 = undefined;
@@ -199,7 +199,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
     } else {
         const default = folder_spec.default orelse return null;
         if (default[0] == '~') {
-            const home = std.os.getenv("HOME") orelse return null;
+            const home = std.process.getEnvVarOwned(arena.allocator(), "HOME") catch null orelse return null;
             return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default[1..] });
         } else {
             return try allocator.dupe(u8, default);
