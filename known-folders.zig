@@ -32,7 +32,7 @@ pub const KnownFolderConfig = struct {
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
 pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
-    var path_or_null = try getPath(allocator, folder);
+    const path_or_null = try getPath(allocator, folder);
     if (path_or_null) |path| {
         defer allocator.free(path);
 
@@ -177,7 +177,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
                     return error.ParseError;
                 }
 
-                var subdir = line[start..end];
+                const subdir = line[start..end];
 
                 break :env_opt try std.mem.concat(arena.allocator(), u8, &[_][]const u8{ home, subdir });
             }
@@ -338,7 +338,7 @@ comptime {
 
 test "query each known folders" {
     inline for (std.meta.fields(KnownFolder)) |fld| {
-        var path_or_null = try getPath(std.testing.allocator, @field(KnownFolder, fld.name));
+        const path_or_null = try getPath(std.testing.allocator, @field(KnownFolder, fld.name));
         if (path_or_null) |path| {
             // TODO: Remove later
             std.debug.print("{s} => '{s}'\n", .{ fld.name, path });
