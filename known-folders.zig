@@ -121,7 +121,7 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
                     return try allocator.dupe(u8, abs);
                 },
                 .suffix => |s| {
-                    const home_dir = if (std.os.getenv("HOME")) |home|
+                    const home_dir = if (std.posix.getenv("HOME")) |home|
                         home
                     else
                         return null;
