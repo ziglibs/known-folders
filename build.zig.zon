@@ -1,0 +1,13 @@
+.{
+    .name = "",
+    .version = "0.0.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "known-folders.zig",
+        "LICENSE",
+        "README.md",
+        "RESOURCES.md",
+    },
+}
