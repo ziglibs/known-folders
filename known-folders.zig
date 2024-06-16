@@ -172,7 +172,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
         _ = user_dirs.readAll(&read) catch null orelse break :env_opt null;
         const start = folder_spec.env.name.len + "=\"$HOME".len;
 
-        var line_it = std.mem.split(u8, &read, "\n");
+        var line_it = std.mem.splitScalar(u8, &read, '\n');
         while (line_it.next()) |line| {
             if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
                 const end = line.len - 1;
@@ -193,7 +193,7 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
             return try std.mem.concat(allocator, u8, &[_][]const u8{ env, suffix });
         } else {
             if (std.mem.eql(u8, folder_spec.env.name, "XDG_CONFIG_DIRS")) {
-                var iter = std.mem.split(u8, env, ":");
+                var iter = std.mem.splitScalar(u8, env, ':');
                 return try allocator.dupe(u8, iter.next() orelse "");
             } else {
                 return try allocator.dupe(u8, env);
