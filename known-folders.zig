@@ -32,14 +32,9 @@ pub const KnownFolderConfig = struct {
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
 pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
-    const path_or_null = try getPath(allocator, folder);
-    if (path_or_null) |path| {
-        defer allocator.free(path);
-
-        return try std.fs.cwd().openDir(path, args);
-    } else {
-        return null;
-    }
+    const path = try getPath(allocator, folder) orelse return null;
+    defer allocator.free(path);
+    return try std.fs.cwd().openDir(path, args);
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
