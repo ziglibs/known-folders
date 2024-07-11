@@ -123,8 +123,18 @@ pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: OpenOptions
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
 pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
-    const config: KnownFolderConfig = comptime if (@hasDecl(root, "known_folders_config")) root.known_folders_config else .{};
+    var system: DefaultSystem = .{};
+    defer system.deinit();
+    return getPathInner(DefaultSystem, &system, allocator, folder);
+}
 
+fn getPathInner(
+    /// `DefaultDefaultSystem`
+    comptime System: type,
+    system: *System,
+    allocator: std.mem.Allocator,
+    folder: KnownFolder,
+) Error!?[]const u8 {
     if (folder == .executable_dir) {
         if (builtin.os.tag == .wasi) return null;
         return std.fs.selfExeDirPathAlloc(allocator) catch |err| switch (err) {
@@ -185,20 +195,17 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
             }
         },
         .macos => {
-            if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_on_mac) {
-                return getPathXdg(allocator, folder);
-            }
+            if (system.config.xdg_on_mac) return try getPathXdg(System, system, allocator, folder);
 
             if (folder == .global_configuration) {
                 // special case because the returned path is absolute
                 return try allocator.dupe(u8, comptime getMacFolderSpec(.global_configuration));
             }
 
-            const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch null orelse return null;
-            defer allocator.free(home_dir);
+            const home_dir = try system.getenv(allocator, "HOME") orelse return null;
 
             if (folder == .home) {
-                return home_dir;
+                return try allocator.dupe(u8, home_dir);
             }
 
             const path = getMacFolderSpec(folder);
@@ -206,32 +213,34 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
         },
 
         // Assume unix derivatives with XDG
-        else => return try getPathXdg(config, allocator, folder),
+        else => return try getPathXdg(System, system, allocator, folder),
     }
 }
 
 fn getPathXdg(
-    comptime config: KnownFolderConfig,
+    /// `DefaultDefaultSystem`
+    comptime System: type,
+    system: *System,
     allocator: std.mem.Allocator,
     folder: KnownFolder,
 ) Error!?[]const u8 {
     const folder_spec = getXdgFolderSpec(folder);
 
     fallback: {
-        if (config.xdg_force_default and folder != .home)
+        if (system.config.xdg_force_default and folder != .home)
             break :fallback;
 
         const env: []const u8, var env_owned: bool = env_opt: {
-            if (std.process.getEnvVarOwned(allocator, folder_spec.env.name) catch null) |env_opt|
+            if (try system.getenv(allocator, folder_spec.env.name)) |env_opt|
                 break :env_opt .{ env_opt, false };
 
-            if (config.xdg_force_default)
+            if (system.config.xdg_force_default)
                 break :fallback;
 
             if (!folder_spec.env.user_dir)
                 break :fallback;
 
-            const env = xdgUserDirLookup(allocator, folder_spec.env.name) catch |err| switch (err) {
+            const env = xdgUserDirLookup(System, system, allocator, folder_spec.env.name) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => break :fallback,
             } orelse break :fallback;
@@ -261,13 +270,41 @@ fn getPathXdg(
 
     const default = folder_spec.default orelse return null;
     if (default[0] == '~') {
-        const home = std.process.getEnvVarOwned(allocator, "HOME") catch null orelse return null;
-        defer allocator.free(home);
+        const home = try system.getenv(allocator, "HOME") orelse return null;
         return try std.fs.path.join(allocator, &.{ home, default[1..] });
     } else {
         return try allocator.dupe(u8, default);
     }
 }
+
+/// Encapsulates all operating system interactions
+const DefaultSystem = struct {
+    comptime config: KnownFolderConfig = if (@hasDecl(root, "known_folders_config")) root.known_folders_config else .{},
+    envmap: if (builtin.os.tag == .wasi and !builtin.link_libc) ?std.process.EnvMap else ?void = null,
+
+    pub fn deinit(system: *DefaultSystem) void {
+        if (builtin.os.tag == .wasi and !builtin.link_libc) {
+            if (system.envmap) |*envmap| envmap.deinit();
+        }
+    }
+
+    /// Caller does **not** owns the returned memory.
+    pub fn getenv(system: *DefaultSystem, allocator: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
+        if (builtin.os.tag == .wasi and !builtin.link_libc) {
+            if (system.envmap == null) {
+                system.envmap = std.process.getEnvMap(allocator) catch return error.OutOfMemory;
+            }
+            return system.envmap.?.get(key);
+        }
+        return std.posix.getenv(key);
+    }
+
+    pub fn openFile(_: *DefaultSystem, dir_path: []const u8, sub_path: []const u8) std.fs.File.OpenError!std.fs.File {
+        var dir = try std.fs.cwd().openDir(dir_path, .{});
+        defer dir.close();
+        return try dir.openFile(sub_path, .{});
+    }
+};
 
 const UserDirLookupError =
     std.mem.Allocator.Error ||
@@ -281,6 +318,9 @@ const UserDirLookupError =
 /// Ported of xdg-user-dir-lookup.c from xdg-user-dirs, which is licensed under the MIT license:
 /// https://cgit.freedesktop.org/xdg/xdg-user-dirs/tree/xdg-user-dir-lookup.c
 fn xdgUserDirLookup(
+    /// `DefaultDefaultSystem`
+    comptime System: type,
+    system: *System,
     allocator: std.mem.Allocator,
     /// A string that specifies the type of directory.
     ///
@@ -311,20 +351,16 @@ fn xdgUserDirLookup(
             std.mem.eql(u8, folder_name, "VIDEOS"));
     }
 
-    const home_dir: []const u8 = std.process.getEnvVarOwned(allocator, "HOME") catch null orelse return null;
-    defer allocator.free(home_dir);
-
-    const maybe_config_home: ?[]const u8 = if (std.process.getEnvVarOwned(allocator, "XDG_CONFIG_HOME") catch null) |value|
+    const home_dir: []const u8 = try system.getenv(allocator, "HOME") orelse return null;
+    const maybe_config_home: ?[]const u8 = if (try system.getenv(allocator, "XDG_CONFIG_HOME")) |value|
         if (value.len != 0) value else null
     else
         null;
-    defer if (maybe_config_home) |config_home| allocator.free(config_home);
 
-    const file: std.fs.File = blk: {
-        var dir = try std.fs.cwd().openDir(maybe_config_home orelse home_dir, .{});
-        defer dir.close();
-        break :blk try dir.openFile(if (maybe_config_home == null) "user-dirs.dirs" else ".config/user-dirs.dirs", .{});
-    };
+    const file: std.fs.File = if (maybe_config_home) |config_home|
+        try system.openFile(config_home, "user-dirs.dirs")
+    else
+        try system.openFile(home_dir, ".config/user-dirs.dirs");
     defer file.close();
 
     var fbr = std.io.bufferedReaderSize(512, file.reader());
