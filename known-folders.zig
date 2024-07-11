@@ -30,8 +30,13 @@ pub const KnownFolderConfig = struct {
     xdg_on_mac: bool = false,
 };
 
+const OpenOptions = if (@import("builtin").zig_version.order(std.SemanticVersion.parse("0.14.0-dev.211+0cc42d090") catch unreachable) == .lt)
+    std.fs.Dir.OpenDirOptions
+else
+    std.fs.Dir.OpenOptions;
+
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenDirOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
+pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: OpenOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
     const path = try getPath(allocator, folder) orelse return null;
     defer allocator.free(path);
     return try std.fs.cwd().openDir(path, args);
