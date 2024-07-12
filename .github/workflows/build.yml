@@ -31,3 +31,20 @@ jobs:
 
       - name: Run Tests
         run: zig build test --summary all
+
+      - name: Setup `wasmtime`
+        if: matrix.os == 'ubuntu-latest'
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "21.0.1" # Wasmtime v22.0.0 has removed support for the "Wasmtime 13-and-prior CLI"
+
+      - name: Print wasmtime version
+        if: matrix.os == 'ubuntu-latest'
+        run: "wasmtime --version"
+
+      - name: Run Tests (wasm32-wasi)
+        if: matrix.os == 'ubuntu-latest'
+        run: zig build test -Dtarget=wasm32-wasi -fwasmtime --summary all
+        env:
+          WASMTIME_NEW_CLI: 0
+          WASMTIME_BACKTRACE_DETAILS: 1
