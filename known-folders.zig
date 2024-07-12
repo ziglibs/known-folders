@@ -123,6 +123,8 @@ pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: OpenOptions
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
 pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
+    const config: KnownFolderConfig = comptime if (@hasDecl(root, "known_folders_config")) root.known_folders_config else .{};
+
     if (folder == .executable_dir) {
         if (builtin.os.tag == .wasi) return null;
         return std.fs.selfExeDirPathAlloc(allocator) catch |err| switch (err) {
@@ -130,10 +132,6 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
             else => null,
         };
     }
-
-    // used for temporary allocations
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
 
     switch (builtin.os.tag) {
         .windows => {
@@ -171,26 +169,24 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
                     }
                 },
                 .by_env => |env_path| {
+                    const env_var = std.process.getEnvVarOwned(allocator, env_path.env_var) catch |err| switch (err) {
+                        error.EnvironmentVariableNotFound => return null,
+                        error.InvalidWtf8 => return null,
+                        error.OutOfMemory => |e| return e,
+                    };
+
                     if (env_path.subdir) |sub_dir| {
-                        const root_path = std.process.getEnvVarOwned(arena.allocator(), env_path.env_var) catch |err| switch (err) {
-                            error.EnvironmentVariableNotFound => return null,
-                            error.InvalidWtf8 => return null,
-                            error.OutOfMemory => |e| return e,
-                        };
-                        return try std.fs.path.join(allocator, &[_][]const u8{ root_path, sub_dir });
+                        defer allocator.free(env_var);
+                        return try std.fs.path.join(allocator, &[_][]const u8{ env_var, sub_dir });
                     } else {
-                        return std.process.getEnvVarOwned(allocator, env_path.env_var) catch |err| switch (err) {
-                            error.EnvironmentVariableNotFound => return null,
-                            error.InvalidWtf8 => return null,
-                            error.OutOfMemory => |e| return e,
-                        };
+                        return env_var;
                     }
                 },
             }
         },
         .macos => {
             if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_on_mac) {
-                return getPathXdg(allocator, &arena, folder);
+                return getPathXdg(allocator, folder);
             }
 
             if (folder == .global_configuration) {
@@ -210,57 +206,66 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
         },
 
         // Assume unix derivatives with XDG
-        else => {
-            return getPathXdg(allocator, &arena, folder);
-        },
+        else => return try getPathXdg(config, allocator, folder),
     }
-    unreachable;
 }
 
-fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, folder: KnownFolder) Error!?[]const u8 {
+fn getPathXdg(
+    comptime config: KnownFolderConfig,
+    allocator: std.mem.Allocator,
+    folder: KnownFolder,
+) Error!?[]const u8 {
     const folder_spec = getXdgFolderSpec(folder);
 
-    if (@hasDecl(root, "known_folders_config") and root.known_folders_config.xdg_force_default) {
-        if (folder_spec.default) |default| {
-            if (default[0] == '~') {
-                const home = std.process.getEnvVarOwned(arena.allocator(), "HOME") catch null orelse return null;
-                return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default[1..] });
-            } else {
-                return try allocator.dupe(u8, default);
-            }
+    fallback: {
+        if (config.xdg_force_default and folder != .home)
+            break :fallback;
+
+        const env: []const u8, var env_owned: bool = env_opt: {
+            if (std.process.getEnvVarOwned(allocator, folder_spec.env.name) catch null) |env_opt|
+                break :env_opt .{ env_opt, false };
+
+            if (config.xdg_force_default)
+                break :fallback;
+
+            if (!folder_spec.env.user_dir)
+                break :fallback;
+
+            const env = xdgUserDirLookup(allocator, folder_spec.env.name) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => break :fallback,
+            } orelse break :fallback;
+
+            break :env_opt .{ env, true };
+        };
+        defer if (env_owned) allocator.free(env);
+
+        if (folder_spec.env.suffix) |suffix| {
+            return try std.fs.path.join(allocator, &.{ env, suffix });
         }
+
+        // XDG_CONFIG_DIRS is a sequence of directories that are separated with ':'
+        if (folder == .global_configuration) {
+            std.debug.assert(std.mem.eql(u8, folder_spec.env.name, "XDG_CONFIG_DIRS"));
+            var iter = std.mem.splitScalar(u8, env, ':');
+            return try allocator.dupe(u8, iter.first());
+        }
+
+        if (env_owned) {
+            env_owned = false;
+            return env;
+        }
+
+        return try allocator.dupe(u8, env);
     }
 
-    const env_opt = env_opt: {
-        if (std.process.getEnvVarOwned(arena.allocator(), folder_spec.env.name) catch null) |env_opt| break :env_opt env_opt;
-
-        if (!folder_spec.env.user_dir) break :env_opt null;
-
-        break :env_opt xdgUserDirLookup(arena.allocator(), folder_spec.env.name) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => break :env_opt null,
-        } orelse break :env_opt null;
-    };
-
-    if (env_opt) |env| {
-        if (folder_spec.env.suffix) |suffix| {
-            return try std.mem.concat(allocator, u8, &[_][]const u8{ env, suffix });
-        } else {
-            if (std.mem.eql(u8, folder_spec.env.name, "XDG_CONFIG_DIRS")) {
-                var iter = std.mem.splitScalar(u8, env, ':');
-                return try allocator.dupe(u8, iter.next() orelse "");
-            } else {
-                return try allocator.dupe(u8, env);
-            }
-        }
+    const default = folder_spec.default orelse return null;
+    if (default[0] == '~') {
+        const home = std.process.getEnvVarOwned(allocator, "HOME") catch null orelse return null;
+        defer allocator.free(home);
+        return try std.fs.path.join(allocator, &.{ home, default[1..] });
     } else {
-        const default = folder_spec.default orelse return null;
-        if (default[0] == '~') {
-            const home = std.process.getEnvVarOwned(arena.allocator(), "HOME") catch null orelse return null;
-            return try std.mem.concat(allocator, u8, &[_][]const u8{ home, default[1..] });
-        } else {
-            return try allocator.dupe(u8, default);
-        }
+        return try allocator.dupe(u8, default);
     }
 }
 
