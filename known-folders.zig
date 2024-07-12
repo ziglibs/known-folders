@@ -129,7 +129,7 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
 }
 
 fn getPathInner(
-    /// `DefaultDefaultSystem`
+    /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
     allocator: std.mem.Allocator,
@@ -218,7 +218,7 @@ fn getPathInner(
 }
 
 fn getPathXdg(
-    /// `DefaultDefaultSystem`
+    /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
     allocator: std.mem.Allocator,
@@ -306,10 +306,93 @@ const DefaultSystem = struct {
     }
 };
 
+/// Encapsulates all operating system interactions which can be overriden for testing purposes.
+const TestingSystem = struct {
+    config: KnownFolderConfig,
+    /// Specifies all accessible environment variables.
+    ///
+    /// Notable environment variables are `HOME`, `XDG_CONFIG_HOME` or `XDG_${FOLDER_NAME}_DIR`.
+    env_map: []const struct { key: []const u8, value: ?[]const u8 } = &.{},
+    /// Specifies all accessible files.
+    ///
+    /// This is only used for the `user-dirs.dirs` file but can easily be applied to any other file.
+    files: []const struct { path: []const u8, data: ?[]const u8 } = &.{},
+
+    tmp_dir: ?std.testing.TmpDir = null,
+
+    comptime {
+        std.debug.assert(builtin.os.tag != .windows);
+    }
+
+    pub fn deinit(impl: *TestingSystem) void {
+        // TODO check which env variables and files have been accessed and fail the test if one was never used.
+        if (impl.tmp_dir) |*tmp_dir| tmp_dir.cleanup();
+    }
+
+    /// Asserts that the environment variable is specified in `TestingSystem.env_map`.
+    ///
+    /// Caller does **not** owns the returned memory.
+    pub fn getenv(system: *TestingSystem, allocator: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
+        {
+            // This allocation will simulate the possibility of allocation failure using `std.testing.checkAllAllocationFailures`
+            allocator.free(try allocator.alloc(u8, 1));
+        }
+
+        for (system.env_map) |kv| {
+            if (std.mem.eql(u8, key, kv.key)) return kv.value;
+        }
+        system.deinit();
+        std.debug.panic("the result of `getenv(\"{}\")` must explicitly specified in the TestingSystem", .{std.zig.fmtEscapes(key)});
+    }
+
+    /// Asserts that the file is specified in `TestingSystem.files`.
+    pub fn openFile(system: *TestingSystem, dir_path: []const u8, sub_path: []const u8) std.fs.File.OpenError!std.fs.File {
+        const file_path = std.fs.path.join(std.testing.allocator, &.{ dir_path, sub_path }) catch @panic("OOM");
+        defer std.testing.allocator.free(file_path);
+
+        const kv = for (system.files) |kv| {
+            if (std.mem.eql(u8, file_path, kv.path)) break kv;
+        } else {
+            system.deinit();
+            std.debug.panic("`openFile(\"{0}\", \"{1}\")` has been called on an unexpected file", .{ std.zig.fmtEscapes(dir_path), std.zig.fmtEscapes(sub_path) });
+        };
+
+        const data = kv.data orelse return error.FileNotFound;
+
+        const tmp_dir = if (system.tmp_dir) |*tmp_dir| tmp_dir else blk: {
+            system.tmp_dir = std.testing.tmpDir(.{});
+            break :blk &system.tmp_dir.?;
+        };
+
+        const buffer_size = std.base64.standard.Encoder.calcSize(kv.path.len);
+        const buffer = std.testing.allocator.alloc(u8, buffer_size) catch @panic("OOM");
+        defer std.testing.allocator.free(buffer);
+
+        const prefix = std.base64.standard.Encoder.encode(buffer, kv.path);
+
+        const writeFile = if (comptime builtin.zig_version.order(std.SemanticVersion.parse("0.13.0-dev.68+b86c4bde6") catch unreachable) == .lt)
+            std.fs.Dir.writeFile2
+        else
+            std.fs.Dir.writeFile;
+
+        writeFile(tmp_dir.dir, .{
+            .sub_path = prefix,
+            .data = data,
+        }) catch |err| {
+            tmp_dir.cleanup();
+            std.debug.panic("failed to create file './{s}/{s}' which represents '{s}': {}", .{ &tmp_dir.sub_path, prefix, kv.path, err });
+        };
+
+        return try tmp_dir.dir.openFile(prefix, .{});
+    }
+};
+
 const UserDirLookupError =
     std.mem.Allocator.Error ||
     std.fs.File.OpenError ||
     std.fs.File.ReadError;
+
+const xdg_user_dir_lookup_line_buffer_size: usize = 511;
 
 /// Looks up a XDG user directory of the specified type.
 ///
@@ -318,7 +401,7 @@ const UserDirLookupError =
 /// Ported of xdg-user-dir-lookup.c from xdg-user-dirs, which is licensed under the MIT license:
 /// https://cgit.freedesktop.org/xdg/xdg-user-dirs/tree/xdg-user-dir-lookup.c
 fn xdgUserDirLookup(
-    /// `DefaultDefaultSystem`
+    /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
     allocator: std.mem.Allocator,
@@ -368,7 +451,7 @@ fn xdgUserDirLookup(
 
     var user_dir: ?[]u8 = null;
     outer: while (true) {
-        var buffer: [512]u8 = undefined;
+        var buffer: [xdg_user_dir_lookup_line_buffer_size + 1]u8 = undefined;
 
         // Similar to `readUntilDelimiterOrEof` but also writes a null-terminator
         var line: [:0]u8 = for (&buffer, 0..) |*out, index| {
@@ -390,6 +473,7 @@ fn xdgUserDirLookup(
             //  - truncate the line
             //
             // The xdg-user-dir implementation chooses to trunacte the line.
+            // See "getPath - user-dirs.dirs - very long line" test
 
             try reader.skipUntilDelimiterOrEof('\n');
 
@@ -566,28 +650,517 @@ fn getXdgFolderSpec(folder: KnownFolder) XdgFolderSpec {
     };
 }
 
-// Ref decls
-comptime {
-    _ = KnownFolder;
-    _ = Error;
-    _ = open;
-    _ = getPath;
+const GetPathTestParams = struct {
+    system: TestingSystem,
+    folder: KnownFolder,
+    expected: ?[]const u8,
+};
+
+fn testGetPath(get_path_params: GetPathTestParams) !void {
+    const funcs = struct {
+        fn testFunc(allocator: std.mem.Allocator, params: GetPathTestParams) !void {
+            var system = params.system;
+            defer system.deinit();
+
+            const actual = try getPathInner(TestingSystem, &system, allocator, params.folder);
+            defer if (actual) |path| allocator.free(path);
+
+            if (params.expected == null and actual == null) return;
+            if (params.expected != null and actual != null and std.mem.eql(u8, params.expected.?, actual.?)) return;
+            std.debug.print("expected: '{?s}' but got '{?s}'\n", .{ params.expected, actual });
+            return error.TestExpectedEqual;
+        }
+    };
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, funcs.testFunc, .{get_path_params});
+}
+
+test "getPath - no HOME" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = null },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = "/home/janedoe/Desktop" },
+            .{ .key = "XDG_DOWNLOAD_DIR", .value = null },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .home,
+        .expected = null,
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/home/janedoe/Desktop",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .downloads,
+        .expected = null,
+    });
+}
+
+test "getPath - find HOME without accessing XDG_CONFIG_HOME" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .home,
+        .expected = "/home/janedoe",
+    });
+}
+
+test "getPath - no user-dirs.dirs" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = null },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = null },
+            .{ .key = "XDG_DOWNLOAD_DIR", .value = "/mnt/drive/downloads" },
+            .{ .key = "XDG_DATA_HOME", .value = null },
+        },
+        .files = &.{.{ .path = "/home/janedoe/.config/user-dirs.dirs", .data = null }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .home,
+        .expected = "/home/janedoe",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/home/janedoe/Desktop",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .downloads,
+        .expected = "/mnt/drive/downloads",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .data,
+        .expected = "/home/janedoe/.local/share",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .fonts,
+        .expected = "/home/janedoe/.local/share/fonts",
+    });
+}
+
+test "getPath - XDG_DATA_HOME with suffix" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = null },
+
+            .{ .key = "XDG_DATA_HOME", .value = "/mnt/data" },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .fonts,
+        .expected = "/mnt/data/fonts",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .app_menu,
+        .expected = "/mnt/data/applications",
+    });
+}
+
+test "getPath - user-dirs.dirs" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = null },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = null },
+            .{ .key = "XDG_DOWNLOAD_DIR", .value = null },
+            .{ .key = "XDG_DOCUMENTS_DIR", .value = null },
+        },
+        .files = &.{.{
+            .path = "/home/janedoe/.config/user-dirs.dirs",
+            .data =
+            \\
+            \\# M for Mini
+            \\W for Wumbo
+            \\
+            \\XDG_DESKTOP_DIR="/mnt/home/Desktop"
+            \\  XDG_DOCUMENTS_DIR = "$HOME/xdg/Documents"
+            ,
+        }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/mnt/home/Desktop",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .downloads,
+        .expected = "/home/janedoe/Downloads",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .documents,
+        .expected = "/home/janedoe/xdg/Documents",
+    });
+}
+
+test "getPath - user-dirs.dirs - XDG_CONFIG_HOME" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = "/home/janedoe/custom" },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = null },
+        },
+        .files = &.{.{
+            .path = "/home/janedoe/custom/user-dirs.dirs",
+            .data =
+            \\XDG_DESKTOP_DIR="/mnt/Desktop"
+            ,
+        }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/mnt/Desktop",
+    });
+}
+
+test "getPath - user-dirs.dirs - duplicate config" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = null },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = null },
+        },
+        .files = &.{.{
+            .path = "/home/janedoe/.config/user-dirs.dirs",
+            .data =
+            \\XDG_DESKTOP_DIR="/mnt/first/Desktop"
+            \\XDG_DESKTOP_DIR="/mnt/second/Desktop"
+            ,
+        }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/mnt/second/Desktop",
+    });
+}
+
+test "getPath - user-dirs.dirs - escaped path" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = null },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = null },
+            .{ .key = "XDG_DOWNLOAD_DIR", .value = null },
+        },
+        .files = &.{.{
+            .path = "/home/janedoe/.config/user-dirs.dirs",
+            .data =
+            \\XDG_DESKTOP_DIR="/mnt/\\/Desktop"
+            \\XDG_DOWNLOAD_DIR="/mnt/\ /Desktop"
+            ,
+        }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/mnt/\\/Desktop",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .downloads,
+        .expected = "/mnt/ /Desktop",
+    });
+}
+
+test "getPath - user-dirs.dirs - very long line" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const len = "XDG_DESKTOP_DIR  =\"\"".len;
+    const xdg_dir_desktop = "/" ++ "a" ** (xdg_user_dir_lookup_line_buffer_size - len - 1);
+    const xdg_dir_download = "/" ++ "b" ** (xdg_user_dir_lookup_line_buffer_size - len);
+    const xdg_dir_documents = "/" ++ "c" ** (xdg_user_dir_lookup_line_buffer_size - len + 1);
+    const xdg_dir_documents_truncated = "/" ++ "c" ** (xdg_user_dir_lookup_line_buffer_size - len);
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = null },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = null },
+            .{ .key = "XDG_DOWNLOAD_DIR", .value = null },
+            .{ .key = "XDG_DOCUMENTS_DIR", .value = null },
+            .{ .key = "XDG_MUSIC_DIR", .value = null },
+        },
+        .files = &.{.{
+            .path = "/home/janedoe/.config/user-dirs.dirs",
+            .data = std.fmt.comptimePrint(
+                \\XDG_DESKTOP_DIR  ="{s}"
+                \\XDG_DOWNLOAD_DIR ="{s}"
+                \\XDG_DOCUMENTS_DIR="{s}"
+                \\XDG_MUSIC_DIR="$HOME/music"
+            , .{ xdg_dir_desktop, xdg_dir_download, xdg_dir_documents }),
+        }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = xdg_dir_desktop,
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .downloads,
+        .expected = xdg_dir_download,
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .documents,
+        .expected = xdg_dir_documents_truncated,
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .music,
+        .expected = "/home/janedoe/music",
+    });
+}
+
+test "getPath - user-dirs.dirs - invalid path" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = null },
+
+            .{ .key = "XDG_DESKTOP_DIR", .value = null },
+        },
+        .files = &.{.{
+            .path = "/home/janedoe/.config/user-dirs.dirs",
+            .data =
+            \\XDG_DESKTOP_DIR="non/absolute/path"
+            ,
+        }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/home/janedoe/Desktop", // fallback
+    });
+}
+
+test "getPath - .global_configuration" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "XDG_CONFIG_DIRS", .value = null },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .global_configuration,
+        .expected = "/etc",
+    });
+}
+
+test "getPath - .global_configuration with XDG_CONFIG_DIRS" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "XDG_CONFIG_DIRS", .value = "/mnt/etc" },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .global_configuration,
+        .expected = "/mnt/etc",
+    });
+
+    system.env_map = &.{
+        .{ .key = "XDG_CONFIG_DIRS", .value = "/mnt/first:/mnt/second" },
+    };
+    try testGetPath(.{
+        .system = system,
+        .folder = .global_configuration,
+        .expected = "/mnt/first",
+    });
+}
+
+test "getPath - with xdg_force_default=true" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true, .xdg_force_default = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+
+            // The fact that the following line wasn't necessary proves that "XDG_DESKTOP_DIR" was never accessed.
+            // .{ .key = "XDG_DESKTOP_DIR", .value = null },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .home,
+        .expected = "/home/janedoe",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/home/janedoe/Desktop",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .global_configuration,
+        .expected = "/etc",
+    });
+}
+
+test "getPath - with xdg_on_mac=false" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = false },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .desktop,
+        .expected = "/home/janedoe/Desktop",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .fonts,
+        .expected = "/home/janedoe/Library/Fonts",
+    });
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .videos,
+        .expected = "/home/janedoe/Movies",
+    });
+}
+
+test "getPath - .global_configuration with xdg_on_mac=false" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = false },
+        .env_map = &.{
+            // The fact that the following line wasn't necessary proves that "HOME" was never accessed.
+            // .{ .key = "HOME", .value = "/home/janedoe" },
+        },
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .global_configuration,
+        .expected = "/Library/Preferences",
+    });
 }
 
 test "query each known folders" {
-    inline for (std.meta.fields(KnownFolder)) |fld| {
-        const path_or_null = try getPath(std.testing.allocator, @field(KnownFolder, fld.name));
-        if (path_or_null) |path| {
-            // TODO: Remove later
-            std.debug.print("{s} => '{s}'\n", .{ fld.name, path });
-            std.testing.allocator.free(path);
-        }
+    for (std.meta.tags(KnownFolder)) |folder| {
+        const path_or_null = try getPath(std.testing.allocator, folder);
+        defer if (path_or_null) |path| std.testing.allocator.free(path);
+        std.debug.print("{s} => {?s}\n", .{ @tagName(folder), path_or_null });
     }
 }
 
 test "open each known folders" {
-    inline for (std.meta.fields(KnownFolder)) |fld| {
-        var dir_or_null = open(std.testing.allocator, @field(KnownFolder, fld.name), .{ .access_sub_paths = true }) catch |e| switch (e) {
+    if (builtin.os.tag == .wasi) return error.SkipZigTest;
+
+    for (std.meta.tags(KnownFolder)) |folder| {
+        var dir_or_null = open(std.testing.allocator, folder, .{}) catch |e| switch (e) {
             error.FileNotFound => return,
             else => return e,
         };
@@ -595,4 +1168,8 @@ test "open each known folders" {
             dir.close();
         }
     }
+}
+
+comptime {
+    std.testing.refAllDeclsRecursive(@This());
 }
