@@ -236,30 +236,10 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
 
         if (!folder_spec.env.user_dir) break :env_opt null;
 
-        // TODO: add caching so we only need to read once in a run
-        const config_dir_path = getPathXdg(arena.allocator(), arena, .local_configuration) catch null orelse break :env_opt null;
-        const config_dir = std.fs.cwd().openDir(config_dir_path, .{}) catch break :env_opt null;
-        const home = std.process.getEnvVarOwned(arena.allocator(), "HOME") catch null orelse break :env_opt null;
-        const user_dirs = config_dir.openFile("user-dirs.dirs", .{}) catch null orelse break :env_opt null;
-
-        var read: [1024 * 8]u8 = undefined;
-        _ = user_dirs.readAll(&read) catch null orelse break :env_opt null;
-        const start = folder_spec.env.name.len + "=\"$HOME".len;
-
-        var line_it = std.mem.splitScalar(u8, &read, '\n');
-        while (line_it.next()) |line| {
-            if (std.mem.startsWith(u8, line, folder_spec.env.name)) {
-                const end = line.len - 1;
-                if (start >= end) {
-                    return error.ParseError;
-                }
-
-                const subdir = line[start..end];
-
-                break :env_opt try std.mem.concat(arena.allocator(), u8, &[_][]const u8{ home, subdir });
-            }
-        }
-        break :env_opt null;
+        break :env_opt xdgUserDirLookup(arena.allocator(), folder_spec.env.name) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => break :env_opt null,
+        } orelse break :env_opt null;
     };
 
     if (env_opt) |env| {
@@ -282,6 +262,177 @@ fn getPathXdg(allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, fol
             return try allocator.dupe(u8, default);
         }
     }
+}
+
+const UserDirLookupError =
+    std.mem.Allocator.Error ||
+    std.fs.File.OpenError ||
+    std.fs.File.ReadError;
+
+/// Looks up a XDG user directory of the specified type.
+///
+/// Caller owns the returned memory.
+//
+/// Ported of xdg-user-dir-lookup.c from xdg-user-dirs, which is licensed under the MIT license:
+/// https://cgit.freedesktop.org/xdg/xdg-user-dirs/tree/xdg-user-dir-lookup.c
+fn xdgUserDirLookup(
+    allocator: std.mem.Allocator,
+    /// A string that specifies the type of directory.
+    ///
+    /// Asserts that the folder type is should be one of the following:
+    /// - `XDG_DESKTOP_DIR`
+    /// - `XDG_DOWNLOAD_DIR`
+    /// - `XDG_TEMPLATES_DIR`
+    /// - `XDG_PUBLICSHARE_DIR`
+    /// - `XDG_DOCUMENTS_DIR`
+    /// - `XDG_MUSIC_DIR`
+    /// - `XDG_PICTURES_DIR`
+    /// - `XDG_VIDEOS_DIR`
+    folder_type: []const u8,
+) UserDirLookupError!?[]u8 {
+    if (builtin.mode == .Debug) {
+        std.debug.assert(std.mem.startsWith(u8, folder_type, "XDG_"));
+        std.debug.assert(std.mem.endsWith(u8, folder_type, "_DIR"));
+
+        const folder_name = folder_type["XDG_".len .. folder_type.len - "_DIR".len];
+        std.debug.assert( //
+            std.mem.eql(u8, folder_name, "DESKTOP") or
+            std.mem.eql(u8, folder_name, "DOWNLOAD") or
+            std.mem.eql(u8, folder_name, "TEMPLATES") or
+            std.mem.eql(u8, folder_name, "PUBLICSHARE") or
+            std.mem.eql(u8, folder_name, "DOCUMENTS") or
+            std.mem.eql(u8, folder_name, "MUSIC") or
+            std.mem.eql(u8, folder_name, "PICTURES") or
+            std.mem.eql(u8, folder_name, "VIDEOS"));
+    }
+
+    const home_dir: []const u8 = std.process.getEnvVarOwned(allocator, "HOME") catch null orelse return null;
+    defer allocator.free(home_dir);
+
+    const maybe_config_home: ?[]const u8 = if (std.process.getEnvVarOwned(allocator, "XDG_CONFIG_HOME") catch null) |value|
+        if (value.len != 0) value else null
+    else
+        null;
+    defer if (maybe_config_home) |config_home| allocator.free(config_home);
+
+    const file: std.fs.File = blk: {
+        var dir = try std.fs.cwd().openDir(maybe_config_home orelse home_dir, .{});
+        defer dir.close();
+        break :blk try dir.openFile(if (maybe_config_home == null) "user-dirs.dirs" else ".config/user-dirs.dirs", .{});
+    };
+    defer file.close();
+
+    var fbr = std.io.bufferedReaderSize(512, file.reader());
+    const reader = fbr.reader();
+
+    var user_dir: ?[]u8 = null;
+    outer: while (true) {
+        var buffer: [512]u8 = undefined;
+
+        // Similar to `readUntilDelimiterOrEof` but also writes a null-terminator
+        var line: [:0]u8 = for (&buffer, 0..) |*out, index| {
+            const byte = reader.readByte() catch |err| switch (err) {
+                error.EndOfStream => if (index == 0) break :outer else '\n',
+                else => |e| return e,
+            };
+            if (byte == '\n') {
+                out.* = 0;
+                break buffer[0..index :0];
+            }
+            out.* = byte;
+        } else blk: {
+            // This happens when the line is longer than 511 characters
+            // There are four possible ways to handle this:
+            //  - use dynamic allocation to acquire enough storage
+            //  - return an error
+            //  - skip the line
+            //  - truncate the line
+            //
+            // The xdg-user-dir implementation chooses to trunacte the line.
+
+            try reader.skipUntilDelimiterOrEof('\n');
+
+            buffer[buffer.len - 1] = 0;
+            break :blk buffer[0 .. buffer.len - 1 :0];
+        };
+
+        while (line[0] == ' ' or line[0] == '\t')
+            line = line[1..];
+
+        if (!std.mem.startsWith(u8, line, folder_type))
+            continue;
+        line = line[folder_type.len..];
+
+        while (line[0] == ' ' or line[0] == '\t') line = line[1..];
+
+        if (line[0] != '=')
+            continue;
+        line = line["=".len..];
+
+        while (line[0] == ' ' or line[0] == '\t') line = line[1..];
+
+        if (line[0] != '\"')
+            continue;
+        line = line["\"".len..];
+
+        if (user_dir) |path| {
+            allocator.free(path);
+            user_dir = null;
+        }
+
+        var is_relative = false;
+        if (std.mem.startsWith(u8, line, "$HOME/")) {
+            line = line["$HOME/".len..];
+            is_relative = true;
+        } else if (line[0] != '/') {
+            continue;
+        }
+
+        var escaped_character_count: usize = 0;
+
+        var index: usize = 0;
+        const end_index: usize = while (index < line.len) : (index += 1) {
+            if (line[index] == '\"')
+                break index;
+            if (line[index] == '\\' and line[index + 1] != 0) {
+                // escaped character
+                escaped_character_count += 1;
+                index += 1;
+            }
+        } else line.len;
+
+        const new_user_dir_len = (if (is_relative) home_dir.len + "/".len else 0) + end_index - escaped_character_count;
+        const new_user_dir = try allocator.alloc(u8, new_user_dir_len);
+        errdefer @compileError("");
+
+        var out_index: usize = 0;
+        if (is_relative) {
+            @memcpy(new_user_dir[0..home_dir.len], home_dir);
+            new_user_dir[home_dir.len] = '/';
+            out_index = home_dir.len + 1;
+        }
+
+        index = 0;
+        while (index < end_index) : (index += 1) {
+            const ch1 = line[index];
+            const ch2 = line[index + 1];
+            if (ch1 == '\\' and ch2 != 0) {
+                // escaped character
+                new_user_dir[out_index] = ch2;
+                out_index += 1;
+                index += 1;
+            } else {
+                new_user_dir[out_index] = ch1;
+                out_index += 1;
+            }
+        }
+
+        std.debug.assert(out_index == new_user_dir.len);
+        std.debug.assert(user_dir == null);
+        user_dir = new_user_dir;
+    }
+
+    return user_dir;
 }
 
 /// Contains the GUIDs for each available known-folder on windows
