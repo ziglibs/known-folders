@@ -2,27 +2,49 @@ name: CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
+  workflow_dispatch:
 
 jobs:
   build:
-
     strategy:
+      fail-fast: false
       matrix:
-        platform: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
-
+        zig-version: [master]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - zig-version: "0.12.1"
+            os: ubuntu-latest
+          - zig-version: "0.13.0"
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
-    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-    - uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Zig
-      uses: goto-bus-stop/setup-zig@v1.3.0
-      with:
-        version: master
-    
-    - name: Run tests
-      run: |
-        zig test known-folders.zig
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: master
+
+      - name: Run Tests
+        run: zig build test --summary all
+
+      - name: Setup `wasmtime`
+        if: matrix.os == 'ubuntu-latest'
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "21.0.1" # Wasmtime v22.0.0 has removed support for the "Wasmtime 13-and-prior CLI"
+
+      - name: Print wasmtime version
+        if: matrix.os == 'ubuntu-latest'
+        run: "wasmtime --version"
+
+      - name: Run Tests (wasm32-wasi)
+        if: matrix.os == 'ubuntu-latest'
+        run: zig build test -Dtarget=wasm32-wasi -fwasmtime --summary all
+        env:
+          WASMTIME_NEW_CLI: 0
+          WASMTIME_BACKTRACE_DETAILS: 1
