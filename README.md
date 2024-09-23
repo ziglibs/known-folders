@@ -25,6 +25,7 @@ pub const KnownFolder = enum {
     local_configuration,
     global_configuration,
     data,
+    state,
     runtime,
     executable_dir,
 };
