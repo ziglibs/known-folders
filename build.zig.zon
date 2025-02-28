@@ -1,5 +1,5 @@
 .{
-    .name = "known-folders",
+    .name = .known_folders,
     .version = "0.0.0",
     .minimum_zig_version = "0.12.0",
     .dependencies = .{},
@@ -11,4 +11,5 @@
         "README.md",
         "RESOURCES.md",
     },
+    .fingerprint = 0x8b68d75b66b00ca0,
 }
