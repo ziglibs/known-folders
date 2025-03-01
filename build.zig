@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const minimum_zig_version = std.SemanticVersion.parse("0.12.0") catch unreachable;
+const minimum_zig_version = std.SemanticVersion.parse("0.14.0-dev.3445+6c3cbb0c8") catch unreachable;
 
 pub fn build(b: *std.Build) void {
     if (comptime (builtin.zig_version.order(minimum_zig_version) == .lt)) {
@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
     const strip = b.option(bool, "strip", "Omit debug information");
     const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &[0][]const u8{};
 
-    _ = b.addModule("known-folders", .{
+    const mod = b.addModule("known-folders", .{
         .root_source_file = b.path("known-folders.zig"),
         .target = target,
         .optimize = optimize,
@@ -30,10 +30,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const unit_tests = b.addTest(.{
-        .root_source_file = b.path("known-folders.zig"),
-        .target = target,
-        .optimize = optimize,
-        .strip = strip,
+        .root_module = mod,
         .filters = test_filters,
     });
 

@@ -45,13 +45,16 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
 
 ## Installation
 
+> [!NOTE]
+> The minimum supported Zig version is `0.14.0-dev.3445+6c3cbb0c8`.
+
 Initialize a `zig build` project if you haven't already.
 
 ```bash
 zig init
 ```
 
-Add the `known-folders` package to your `build.zig.zon`.
+Add the `known_folders` package to your `build.zig.zon`.
 
 ```bash
 zig fetch --save git+https://github.com/ziglibs/known-folders.git
@@ -60,7 +63,7 @@ zig fetch --save git+https://github.com/ziglibs/known-folders.git
 You can then import `known-folders` in your `build.zig` with:
 
 ```zig
-const known_folders = b.dependency("known-folders", .{}).module("known-folders");
+const known_folders = b.dependency("known_folders", .{}).module("known-folders");
 const exe = b.addExecutable(...);
 // This adds the known-folders module to the executable which can then be imported with `@import("known-folders")`
 exe.root_module.addImport("known-folders", known_folders);
