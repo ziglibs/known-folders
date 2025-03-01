@@ -1,7 +1,7 @@
 .{
-    .name = "known-folders",
+    .name = .known_folders,
     .version = "0.0.0",
-    .minimum_zig_version = "0.12.0",
+    .minimum_zig_version = "0.14.0-dev.3445+6c3cbb0c8",
     .dependencies = .{},
     .paths = .{
         "build.zig",
@@ -11,4 +11,5 @@
         "README.md",
         "RESOURCES.md",
     },
+    .fingerprint = 0x8b68d75b268f2f17, // Changing this has security and trust implications.
 }
