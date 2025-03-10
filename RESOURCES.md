@@ -35,4 +35,5 @@
 | Roaming Configuration | %APPDATA%                | XDG_CONFIG_HOME            | HOME/Library/Preferences |
 | Local Configuration   | %LOCALAPPDATA%           | XDG_CONFIG_HOME            | HOME/Library/Application Support |
 | Data                  | %APPDATA%                | XDG_DATA_HOME              | HOME/Library/Application Support |
+| State                 | %LOCALAPPDATA%/Temp      | XDG_STATE_HOME             | HOME/Library/Logs |
 | Runtime               | %LOCALAPPDATA%/Temp      | XDG_RUNTIME_DIR            | HOME/Library/Application Support |

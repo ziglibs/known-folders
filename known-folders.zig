@@ -89,6 +89,13 @@ pub const KnownFolder = enum {
     ///
     /// XDG's definition of `XDG_DATA_HOME`: There is a set of preference ordered base directories
     data,
+    /// The base directory relative to which user-specific state data should be written.
+    ///
+    /// Windows:       `%LOCALAPPDATA%\Temp`
+    /// MacOS default: `$HOME/Library/Logs`
+    ///  *nix default: `$HOME/.local/state`
+    /// XDG directory: `XDG_STATE_HOME`
+    state,
     /// The base directory relative to which user-specific runtime files and other file objects should be placed.
     ///
     /// Windows:       `%LOCALAPPDATA%\Temp`
@@ -587,6 +594,7 @@ fn getWindowsFolderSpec(folder: KnownFolder) WindowsFolderSpec {
         .local_configuration => .{ .by_guid = comptime std.os.windows.GUID.parse("{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}") }, // FOLDERID_LocalAppData
         .global_configuration => .{ .by_guid = comptime std.os.windows.GUID.parse("{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}") }, // FOLDERID_ProgramData
         .data => .{ .by_env = .{ .env_var = "APPDATA", .subdir = null } }, // %LOCALAPPDATA%\Temp
+        .state => .{ .by_env = .{ .env_var = "LOCALAPPDATA", .subdir = "Temp" } }, // %LOCALAPPDATA%\Temp
         .runtime => .{ .by_env = .{ .env_var = "LOCALAPPDATA", .subdir = "Temp" } },
     };
 }
@@ -610,6 +618,7 @@ fn getMacFolderSpec(folder: KnownFolder) []const u8 {
         .local_configuration => "Library/Application Support",
         .global_configuration => "/Library/Preferences", // absolute path
         .data => "Library/Application Support",
+        .state => "Library/Logs",
         .runtime => "Library/Application Support",
     };
 }
@@ -646,6 +655,7 @@ fn getXdgFolderSpec(folder: KnownFolder) XdgFolderSpec {
         .local_configuration => .{ .env = .{ .name = "XDG_CONFIG_HOME", .user_dir = false, .suffix = null }, .default = "~/.config" },
         .global_configuration => .{ .env = .{ .name = "XDG_CONFIG_DIRS", .user_dir = false, .suffix = null }, .default = "/etc" }, // absolute path
         .data => .{ .env = .{ .name = "XDG_DATA_HOME", .user_dir = false, .suffix = null }, .default = "~/.local/share" },
+        .state => .{ .env = .{ .name = "XDG_STATE_HOME", .user_dir = false, .suffix = null }, .default = "~/.local/state" },
         .runtime => .{ .env = .{ .name = "XDG_RUNTIME_DIR", .user_dir = false, .suffix = null }, .default = null },
     };
 }
