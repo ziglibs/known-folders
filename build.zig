@@ -28,6 +28,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .strip = strip,
     });
+    if (target.result.os.tag == .windows) {
+        mod.linkSystemLibrary("shell32", .{});
+        mod.linkSystemLibrary("ole32", .{});
+    }
 
     const unit_tests = b.addTest(.{
         .root_module = mod,
