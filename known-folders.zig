@@ -109,13 +109,8 @@ pub const KnownFolderConfig = struct {
     xdg_on_mac: bool = false,
 };
 
-const OpenOptions = if (@import("builtin").zig_version.order(std.SemanticVersion.parse("0.14.0-dev.211+0cc42d090") catch unreachable) == .lt)
-    std.fs.Dir.OpenDirOptions
-else
-    std.fs.Dir.OpenOptions;
-
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: OpenOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
+pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
     const path = try getPath(allocator, folder) orelse return null;
     defer allocator.free(path);
     return try std.fs.cwd().openDir(path, args);
@@ -370,12 +365,7 @@ const TestingSystem = struct {
 
         const prefix = std.base64.standard.Encoder.encode(buffer, kv.path);
 
-        const writeFile = if (comptime builtin.zig_version.order(std.SemanticVersion.parse("0.13.0-dev.68+b86c4bde6") catch unreachable) == .lt)
-            std.fs.Dir.writeFile2
-        else
-            std.fs.Dir.writeFile;
-
-        writeFile(tmp_dir.dir, .{
+        tmp_dir.dir.writeFile(.{
             .sub_path = prefix,
             .data = data,
         }) catch |err| {
@@ -423,8 +413,7 @@ fn xdgUserDirLookup(
         std.debug.assert(std.mem.endsWith(u8, folder_type, "_DIR"));
 
         const folder_name = folder_type["XDG_".len .. folder_type.len - "_DIR".len];
-        std.debug.assert( //
-            std.mem.eql(u8, folder_name, "DESKTOP") or
+        std.debug.assert(std.mem.eql(u8, folder_name, "DESKTOP") or
             std.mem.eql(u8, folder_name, "DOWNLOAD") or
             std.mem.eql(u8, folder_name, "TEMPLATES") or
             std.mem.eql(u8, folder_name, "PUBLICSHARE") or

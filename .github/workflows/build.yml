@@ -14,16 +14,16 @@ jobs:
       matrix:
         zig-version: [master]
         os: [ubuntu-latest, macos-latest, windows-latest]
-        # include:
-        #   - zig-version: "0.14.0"
-        #     os: ubuntu-latest
+        include:
+          - zig-version: "0.14.1"
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Zig
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           version: master
 
