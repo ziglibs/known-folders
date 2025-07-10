@@ -337,7 +337,11 @@ const TestingSystem = struct {
             if (std.mem.eql(u8, key, kv.key)) return kv.value;
         }
         system.deinit();
-        std.debug.panic("the result of `getenv(\"{}\")` must explicitly specified in the TestingSystem", .{std.zig.fmtEscapes(key)});
+        if (@hasDecl(std.zig, "fmtString")) {
+            std.debug.panic("the result of `getenv(\"{f}\")` must explicitly specified in the TestingSystem", .{std.zig.fmtString(key)});
+        } else {
+            std.debug.panic("the result of `getenv(\"{}\")` must explicitly specified in the TestingSystem", .{std.zig.fmtEscapes(key)});
+        }
     }
 
     /// Asserts that the file is specified in `TestingSystem.files`.
@@ -349,7 +353,11 @@ const TestingSystem = struct {
             if (std.mem.eql(u8, file_path, kv.path)) break kv;
         } else {
             system.deinit();
-            std.debug.panic("`openFile(\"{0}\", \"{1}\")` has been called on an unexpected file", .{ std.zig.fmtEscapes(dir_path), std.zig.fmtEscapes(sub_path) });
+            if (@hasDecl(std.zig, "fmtString")) {
+                std.debug.panic("`openFile(\"{0f}\", \"{1f}\")` has been called on an unexpected file", .{ std.zig.fmtString(dir_path), std.zig.fmtString(sub_path) });
+            } else {
+                std.debug.panic("`openFile(\"{0}\", \"{1}\")` has been called on an unexpected file", .{ std.zig.fmtEscapes(dir_path), std.zig.fmtEscapes(sub_path) });
+            }
         };
 
         const data = kv.data orelse return error.FileNotFound;
@@ -435,40 +443,12 @@ fn xdgUserDirLookup(
         try system.openFile(home_dir, ".config/user-dirs.dirs");
     defer file.close();
 
-    var fbr = std.io.bufferedReaderSize(512, file.reader());
-    const reader = fbr.reader();
+    var buffer: [xdg_user_dir_lookup_line_buffer_size + 1]u8 = undefined;
+    var line_it: if (@hasDecl(std.fs.File, "stdin")) LineIterator else OldLineIterator = .init(file);
 
     var user_dir: ?[]u8 = null;
-    outer: while (true) {
-        var buffer: [xdg_user_dir_lookup_line_buffer_size + 1]u8 = undefined;
-
-        // Similar to `readUntilDelimiterOrEof` but also writes a null-terminator
-        var line: [:0]u8 = for (&buffer, 0..) |*out, index| {
-            const byte = reader.readByte() catch |err| switch (err) {
-                error.EndOfStream => if (index == 0) break :outer else '\n',
-                else => |e| return e,
-            };
-            if (byte == '\n') {
-                out.* = 0;
-                break buffer[0..index :0];
-            }
-            out.* = byte;
-        } else blk: {
-            // This happens when the line is longer than 511 characters
-            // There are four possible ways to handle this:
-            //  - use dynamic allocation to acquire enough storage
-            //  - return an error
-            //  - skip the line
-            //  - truncate the line
-            //
-            // The xdg-user-dir implementation chooses to trunacte the line.
-            // See "getPath - user-dirs.dirs - very long line" test
-
-            try reader.skipUntilDelimiterOrEof('\n');
-
-            buffer[buffer.len - 1] = 0;
-            break :blk buffer[0 .. buffer.len - 1 :0];
-        };
+    while (try line_it.next(&buffer)) |line_capture| {
+        var line = line_capture;
 
         while (line[0] == ' ' or line[0] == '\t')
             line = line[1..];
@@ -548,6 +528,108 @@ fn xdgUserDirLookup(
 
     return user_dir;
 }
+
+const OldLineIterator = struct {
+    fbr: std.io.BufferedReader(4096, std.fs.File.Reader),
+
+    fn init(file: std.fs.File) OldLineIterator {
+        return .{
+            .fbr = std.io.bufferedReader(file.reader()),
+        };
+    }
+
+    fn next(it: *OldLineIterator, buffer: []u8) std.posix.ReadError!?[:0]const u8 {
+        const reader = it.fbr.reader();
+
+        // Similar to `readUntilDelimiterOrEof` but also writes a null-terminator
+        for (buffer, 0..) |*out, index| {
+            const byte = reader.readByte() catch |err| switch (err) {
+                error.EndOfStream => if (index == 0) return null else '\n',
+                else => |e| return e,
+            };
+            if (byte == '\n') {
+                out.* = 0;
+                return buffer[0..index :0];
+            }
+            out.* = byte;
+        } else {
+            // This happens when the line is longer than 511 characters
+            // There are four possible ways to handle this:
+            //  - use dynamic allocation to acquire enough storage
+            //  - return an error
+            //  - skip the line
+            //  - truncate the line
+            //
+            // The xdg-user-dir implementation chooses to trunacte the line.
+            // See "getPath - user-dirs.dirs - very long line" test
+
+            try reader.skipUntilDelimiterOrEof('\n');
+
+            buffer[buffer.len - 1] = 0;
+            return buffer[0 .. buffer.len - 1 :0];
+        }
+    }
+};
+
+const LineIterator = struct {
+    file_reader: std.fs.File.Reader,
+    keep_reading: bool,
+    discard_until_newline: bool,
+
+    fn init(file: std.fs.File) LineIterator {
+        return .{
+            .file_reader = file.reader(undefined),
+            .keep_reading = true,
+            .discard_until_newline = false,
+        };
+    }
+
+    fn next(it: *LineIterator, buffer: []u8) std.posix.ReadError!?[:'\n']const u8 {
+        if (!it.keep_reading) return null;
+
+        const reader = &it.file_reader.interface;
+        reader.buffer = buffer[0 .. buffer.len - 1]; // leave space for the sentinel
+
+        if (it.discard_until_newline) {
+            it.discard_until_newline = false;
+            _ = reader.discardDelimiterInclusive('\n') catch |discard_err| switch (discard_err) {
+                error.ReadFailed => return it.file_reader.err.?,
+                error.EndOfStream => return null,
+            };
+        }
+
+        return reader.takeSentinel('\n') catch |err| switch (err) {
+            error.ReadFailed => return it.file_reader.err.?,
+            error.EndOfStream => {
+                if (reader.bufferedLen() == 0)
+                    return null; // trailing newline
+
+                // This is the last line
+                buffer[reader.end] = '\n';
+                const line = buffer[reader.seek..reader.end :'\n'];
+                it.keep_reading = false;
+                return line;
+            },
+            error.StreamTooLong => {
+                // This happens when the line is longer than 511 characters
+                // There are four possible ways to handle this:
+                //  - use dynamic allocation to acquire enough storage
+                //  - return an error
+                //  - skip the line
+                //  - truncate the line
+                //
+                // The xdg-user-dir implementation chooses to trunacte the line.
+                // See "getPath - user-dirs.dirs - very long line" test
+
+                buffer[reader.end] = '\n';
+                const line = buffer[reader.seek..reader.end :'\n'];
+                it.discard_until_newline = true;
+
+                return line;
+            },
+        };
+    }
+};
 
 /// Contains the GUIDs for each available known-folder on windows
 const WindowsFolderSpec = union(enum) {
@@ -888,6 +970,34 @@ test "getPath - user-dirs.dirs - duplicate config" {
         .system = system,
         .folder = .desktop,
         .expected = "/mnt/second/Desktop",
+    });
+}
+
+test "getPath - user-dirs.dirs - trailing newline" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var system: TestingSystem = .{
+        .config = .{ .xdg_on_mac = true },
+        .env_map = &.{
+            .{ .key = "HOME", .value = "/home/janedoe" },
+            .{ .key = "XDG_CONFIG_HOME", .value = "/home/janedoe/custom" },
+
+            .{ .key = "XDG_VIDEOS_DIR", .value = null },
+        },
+        .files = &.{.{
+            .path = "/home/janedoe/custom/user-dirs.dirs",
+            .data =
+            \\XDG_VIDEOS_DIR="/mnt/Videos"
+            \\
+            ,
+        }},
+    };
+    defer system.deinit();
+
+    try testGetPath(.{
+        .system = system,
+        .folder = .videos,
+        .expected = "/mnt/Videos",
     });
 }
 
