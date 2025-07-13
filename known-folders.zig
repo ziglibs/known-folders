@@ -146,8 +146,8 @@ fn getPathInner(
                     dwFlags: std.os.windows.DWORD,
                     hToken: ?std.os.windows.HANDLE,
                     ppszPathL: *std.os.windows.PWSTR,
-                ) callconv(std.os.windows.WINAPI) std.os.windows.HRESULT;
-                extern "ole32" fn CoTaskMemFree(pv: std.os.windows.LPVOID) callconv(std.os.windows.WINAPI) void;
+                ) callconv(.winapi) std.os.windows.HRESULT;
+                extern "ole32" fn CoTaskMemFree(pv: std.os.windows.LPVOID) callconv(.winapi) void;
             };
 
             switch (getWindowsFolderSpec(folder)) {
