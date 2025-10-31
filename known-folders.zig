@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const root = @import("root");
 const builtin = @import("builtin");
 
@@ -117,20 +118,21 @@ pub const KnownFolderConfig = struct {
 };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
-    const path = try getPath(allocator, folder) orelse return null;
+pub fn open(io: Io, allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
+    const path = try getPath(io, allocator, folder) orelse return null;
     defer allocator.free(path);
     return try std.fs.cwd().openDir(path, args);
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
+pub fn getPath(io: Io, allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
     var system: DefaultSystem = .{};
     defer system.deinit();
-    return getPathInner(DefaultSystem, &system, allocator, folder);
+    return getPathInner(io, DefaultSystem, &system, allocator, folder);
 }
 
 fn getPathInner(
+    io: Io,
     /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
@@ -215,11 +217,12 @@ fn getPathInner(
         },
 
         // Assume unix derivatives with XDG
-        else => return try getPathXdg(System, system, allocator, folder),
+        else => return try getPathXdg(io, System, system, allocator, folder),
     }
 }
 
 fn getPathXdg(
+    io: Io,
     /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
@@ -242,7 +245,7 @@ fn getPathXdg(
             if (!folder_spec.env.user_dir)
                 break :fallback;
 
-            const env = xdgUserDirLookup(System, system, allocator, folder_spec.env.name) catch |err| switch (err) {
+            const env = xdgUserDirLookup(io, System, system, allocator, folder_spec.env.name) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => break :fallback,
             } orelse break :fallback;
@@ -406,6 +409,7 @@ const xdg_user_dir_lookup_line_buffer_size: usize = 511;
 /// Ported of xdg-user-dir-lookup.c from xdg-user-dirs, which is licensed under the MIT license:
 /// https://cgit.freedesktop.org/xdg/xdg-user-dirs/tree/xdg-user-dir-lookup.c
 fn xdgUserDirLookup(
+    io: Io,
     /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
@@ -451,7 +455,7 @@ fn xdgUserDirLookup(
     defer file.close();
 
     var buffer: [xdg_user_dir_lookup_line_buffer_size + 1]u8 = undefined;
-    var line_it: if (@hasDecl(std.fs.File, "stdin")) LineIterator else OldLineIterator = .init(file);
+    var line_it: if (@hasDecl(std.fs.File, "stdin")) LineIterator else OldLineIterator = .init(io, file);
 
     var user_dir: ?[]u8 = null;
     while (try line_it.next(&buffer)) |line_capture| {
@@ -583,9 +587,9 @@ const LineIterator = struct {
     keep_reading: bool,
     discard_until_newline: bool,
 
-    fn init(file: std.fs.File) LineIterator {
+    fn init(io: Io, file: std.fs.File) LineIterator {
         return .{
-            .file_reader = file.reader(undefined),
+            .file_reader = file.reader(io, undefined),
             .keep_reading = true,
             .discard_until_newline = false,
         };
@@ -743,7 +747,7 @@ fn testGetPath(get_path_params: GetPathTestParams) !void {
             var system = params.system;
             defer system.deinit();
 
-            const actual = try getPathInner(TestingSystem, &system, allocator, params.folder);
+            const actual = try getPathInner(std.testing.io, TestingSystem, &system, allocator, params.folder);
             defer if (actual) |path| allocator.free(path);
 
             if (params.expected == null and actual == null) return;
@@ -1259,7 +1263,7 @@ test "getPath - .global_configuration with xdg_on_mac=false" {
 
 test "query each known folders" {
     for (std.meta.tags(KnownFolder)) |folder| {
-        const path_or_null = try getPath(std.testing.allocator, folder);
+        const path_or_null = try getPath(std.testing.io, std.testing.allocator, folder);
         defer if (path_or_null) |path| std.testing.allocator.free(path);
         std.debug.print("{s} => {?s}\n", .{ @tagName(folder), path_or_null });
     }
@@ -1269,7 +1273,7 @@ test "open each known folders" {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
     for (std.meta.tags(KnownFolder)) |folder| {
-        var dir_or_null = open(std.testing.allocator, folder, .{}) catch |e| switch (e) {
+        var dir_or_null = open(std.testing.io, std.testing.allocator, folder, .{}) catch |e| switch (e) {
             error.FileNotFound => return,
             else => return e,
         };
