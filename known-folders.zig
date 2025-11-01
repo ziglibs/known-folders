@@ -337,11 +337,7 @@ const TestingSystem = struct {
             if (std.mem.eql(u8, key, kv.key)) return kv.value;
         }
         system.deinit();
-        if (@hasDecl(std.zig, "fmtString")) {
-            std.debug.panic("the result of `getenv(\"{f}\")` must explicitly specified in the TestingSystem", .{std.zig.fmtString(key)});
-        } else {
-            std.debug.panic("the result of `getenv(\"{}\")` must explicitly specified in the TestingSystem", .{std.zig.fmtEscapes(key)});
-        }
+        std.debug.panic("the result of `getenv(\"{f}\")` must explicitly specified in the TestingSystem", .{std.zig.fmtString(key)});
     }
 
     /// Asserts that the file is specified in `TestingSystem.files`.
@@ -353,11 +349,7 @@ const TestingSystem = struct {
             if (std.mem.eql(u8, file_path, kv.path)) break kv;
         } else {
             system.deinit();
-            if (@hasDecl(std.zig, "fmtString")) {
-                std.debug.panic("`openFile(\"{0f}\", \"{1f}\")` has been called on an unexpected file", .{ std.zig.fmtString(dir_path), std.zig.fmtString(sub_path) });
-            } else {
-                std.debug.panic("`openFile(\"{0}\", \"{1}\")` has been called on an unexpected file", .{ std.zig.fmtEscapes(dir_path), std.zig.fmtEscapes(sub_path) });
-            }
+            std.debug.panic("`openFile(\"{0f}\", \"{1f}\")` has been called on an unexpected file", .{ std.zig.fmtString(dir_path), std.zig.fmtString(sub_path) });
         };
 
         const data = kv.data orelse return error.FileNotFound;
@@ -444,7 +436,7 @@ fn xdgUserDirLookup(
     defer file.close();
 
     var buffer: [xdg_user_dir_lookup_line_buffer_size + 1]u8 = undefined;
-    var line_it: if (@hasDecl(std.fs.File, "stdin")) LineIterator else OldLineIterator = .init(file);
+    var line_it: LineIterator = .init(file);
 
     var user_dir: ?[]u8 = null;
     while (try line_it.next(&buffer)) |line_capture| {
@@ -528,48 +520,6 @@ fn xdgUserDirLookup(
 
     return user_dir;
 }
-
-const OldLineIterator = struct {
-    fbr: std.io.BufferedReader(4096, std.fs.File.Reader),
-
-    fn init(file: std.fs.File) OldLineIterator {
-        return .{
-            .fbr = std.io.bufferedReader(file.reader()),
-        };
-    }
-
-    fn next(it: *OldLineIterator, buffer: []u8) std.posix.ReadError!?[:0]const u8 {
-        const reader = it.fbr.reader();
-
-        // Similar to `readUntilDelimiterOrEof` but also writes a null-terminator
-        for (buffer, 0..) |*out, index| {
-            const byte = reader.readByte() catch |err| switch (err) {
-                error.EndOfStream => if (index == 0) return null else '\n',
-                else => |e| return e,
-            };
-            if (byte == '\n') {
-                out.* = 0;
-                return buffer[0..index :0];
-            }
-            out.* = byte;
-        } else {
-            // This happens when the line is longer than 511 characters
-            // There are four possible ways to handle this:
-            //  - use dynamic allocation to acquire enough storage
-            //  - return an error
-            //  - skip the line
-            //  - truncate the line
-            //
-            // The xdg-user-dir implementation chooses to trunacte the line.
-            // See "getPath - user-dirs.dirs - very long line" test
-
-            try reader.skipUntilDelimiterOrEof('\n');
-
-            buffer[buffer.len - 1] = 0;
-            return buffer[0 .. buffer.len - 1 :0];
-        }
-    }
-};
 
 const LineIterator = struct {
     file_reader: std.fs.File.Reader,
