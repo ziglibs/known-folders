@@ -117,23 +117,33 @@ pub const KnownFolderConfig = struct {
 };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(allocator: std.mem.Allocator, folder: KnownFolder, args: std.fs.Dir.OpenOptions) (std.fs.Dir.OpenError || Error)!?std.fs.Dir {
-    const path = try getPath(allocator, folder) orelse return null;
+pub fn open(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    folder: KnownFolder,
+    args: std.Io.Dir.OpenOptions,
+) (std.Io.Dir.OpenError || Error)!?std.Io.Dir {
+    const path = try getPath(io, allocator, folder) orelse return null;
     defer allocator.free(path);
-    return try std.fs.cwd().openDir(path, args);
+    return try std.Io.Dir.cwd().openDir(io, path, args);
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const u8 {
+pub fn getPath(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    folder: KnownFolder,
+) Error!?[]const u8 {
     var system: DefaultSystem = .{};
     defer system.deinit();
-    return getPathInner(DefaultSystem, &system, allocator, folder);
+    return getPathInner(DefaultSystem, &system, io, allocator, folder);
 }
 
 fn getPathInner(
     /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
+    io: std.Io,
     allocator: std.mem.Allocator,
     folder: KnownFolder,
 ) Error!?[]const u8 {
@@ -197,7 +207,7 @@ fn getPathInner(
             }
         },
         .macos => {
-            if (system.config.xdg_on_mac) return try getPathXdg(System, system, allocator, folder);
+            if (system.config.xdg_on_mac) return try getPathXdg(System, system, io, allocator, folder);
 
             if (folder == .global_configuration) {
                 // special case because the returned path is absolute
@@ -215,7 +225,7 @@ fn getPathInner(
         },
 
         // Assume unix derivatives with XDG
-        else => return try getPathXdg(System, system, allocator, folder),
+        else => return try getPathXdg(System, system, io, allocator, folder),
     }
 }
 
@@ -223,6 +233,7 @@ fn getPathXdg(
     /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
+    io: std.Io,
     allocator: std.mem.Allocator,
     folder: KnownFolder,
 ) Error!?[]const u8 {
@@ -242,7 +253,7 @@ fn getPathXdg(
             if (!folder_spec.env.user_dir)
                 break :fallback;
 
-            const env = xdgUserDirLookup(System, system, allocator, folder_spec.env.name) catch |err| switch (err) {
+            const env = xdgUserDirLookup(System, system, io, allocator, folder_spec.env.name) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => break :fallback,
             } orelse break :fallback;
@@ -301,10 +312,10 @@ const DefaultSystem = struct {
         return std.posix.getenv(key);
     }
 
-    pub fn openFile(_: *DefaultSystem, dir_path: []const u8, sub_path: []const u8) std.fs.File.OpenError!std.fs.File {
-        var dir = try std.fs.cwd().openDir(dir_path, .{});
-        defer dir.close();
-        return try dir.openFile(sub_path, .{});
+    pub fn openFile(_: *DefaultSystem, io: std.Io, dir_path: []const u8, sub_path: []const u8) std.Io.File.OpenError!std.Io.File {
+        var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+        defer dir.close(io);
+        return try dir.openFile(io, sub_path, .{});
     }
 };
 
@@ -348,7 +359,7 @@ const TestingSystem = struct {
     }
 
     /// Asserts that the file is specified in `TestingSystem.files`.
-    pub fn openFile(system: *TestingSystem, dir_path: []const u8, sub_path: []const u8) std.fs.File.OpenError!std.fs.File {
+    pub fn openFile(system: *TestingSystem, io: std.Io, dir_path: []const u8, sub_path: []const u8) std.Io.File.OpenError!std.Io.File {
         const file_path = std.fs.path.join(std.testing.allocator, &.{ dir_path, sub_path }) catch @panic("OOM");
         defer std.testing.allocator.free(file_path);
 
@@ -380,14 +391,15 @@ const TestingSystem = struct {
             std.debug.panic("failed to create file './{s}/{s}' which represents '{s}': {}", .{ &tmp_dir.sub_path, prefix, kv.path, err });
         };
 
-        return try tmp_dir.dir.openFile(prefix, .{});
+        const dir: std.Io.Dir = .{ .handle = tmp_dir.dir.fd };
+        return try dir.openFile(io, prefix, .{});
     }
 };
 
 const UserDirLookupError =
     std.mem.Allocator.Error ||
-    std.fs.File.OpenError ||
-    std.fs.File.ReadError;
+    std.Io.File.OpenError ||
+    std.posix.ReadError;
 
 const xdg_user_dir_lookup_line_buffer_size: usize = 511;
 
@@ -401,6 +413,7 @@ fn xdgUserDirLookup(
     /// `DefaultDefaultSystem` or `TestingDefaultSystem`
     comptime System: type,
     system: *System,
+    io: std.Io,
     allocator: std.mem.Allocator,
     /// A string that specifies the type of directory.
     ///
@@ -436,14 +449,14 @@ fn xdgUserDirLookup(
     else
         null;
 
-    const file: std.fs.File = if (maybe_config_home) |config_home|
-        try system.openFile(config_home, "user-dirs.dirs")
+    const file: std.Io.File = if (maybe_config_home) |config_home|
+        try system.openFile(io, config_home, "user-dirs.dirs")
     else
-        try system.openFile(home_dir, ".config/user-dirs.dirs");
-    defer file.close();
+        try system.openFile(io, home_dir, ".config/user-dirs.dirs");
+    defer file.close(io);
 
     var buffer: [xdg_user_dir_lookup_line_buffer_size + 1]u8 = undefined;
-    var line_it: LineIterator = .init(file);
+    var line_it: LineIterator = .init(io, file);
 
     var user_dir: ?[]u8 = null;
     while (try line_it.next(&buffer)) |line_capture| {
@@ -529,13 +542,13 @@ fn xdgUserDirLookup(
 }
 
 const LineIterator = struct {
-    file_reader: std.fs.File.Reader,
+    file_reader: std.Io.File.Reader,
     keep_reading: bool,
     discard_until_newline: bool,
 
-    fn init(file: std.fs.File) LineIterator {
+    fn init(io: std.Io, file: std.Io.File) LineIterator {
         return .{
-            .file_reader = file.reader(undefined),
+            .file_reader = file.reader(io, undefined),
             .keep_reading = true,
             .discard_until_newline = false,
         };
@@ -693,7 +706,7 @@ fn testGetPath(get_path_params: GetPathTestParams) !void {
             var system = params.system;
             defer system.deinit();
 
-            const actual = try getPathInner(TestingSystem, &system, allocator, params.folder);
+            const actual = try getPathInner(TestingSystem, &system, std.testing.io, allocator, params.folder);
             defer if (actual) |path| allocator.free(path);
 
             if (params.expected == null and actual == null) return;
@@ -1209,7 +1222,7 @@ test "getPath - .global_configuration with xdg_on_mac=false" {
 
 test "query each known folders" {
     for (std.meta.tags(KnownFolder)) |folder| {
-        const path_or_null = try getPath(std.testing.allocator, folder);
+        const path_or_null = try getPath(std.testing.io, std.testing.allocator, folder);
         defer if (path_or_null) |path| std.testing.allocator.free(path);
         std.debug.print("{s} => {?s}\n", .{ @tagName(folder), path_or_null });
     }
@@ -1219,12 +1232,12 @@ test "open each known folders" {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
     for (std.meta.tags(KnownFolder)) |folder| {
-        var dir_or_null = open(std.testing.allocator, folder, .{}) catch |e| switch (e) {
+        var dir_or_null = open(std.testing.io, std.testing.allocator, folder, .{}) catch |e| switch (e) {
             error.FileNotFound => return,
             else => return e,
         };
         if (dir_or_null) |*dir| {
-            dir.close();
+            dir.close(std.testing.io);
         }
     }
 }
