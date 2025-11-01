@@ -47,7 +47,7 @@ pub fn getPath(allocator: std.mem.Allocator, folder: KnownFolder) Error!?[]const
 ## Installation
 
 > [!NOTE]
-> The minimum supported Zig version is `0.14.0`.
+> The supported Zig version is `0.15.x`.
 
 Initialize a `zig build` project if you haven't already.
 
