@@ -149,7 +149,7 @@ fn getPathInner(
 ) Error!?[]const u8 {
     if (folder == .executable_dir) {
         if (builtin.os.tag == .wasi) return null;
-        return std.fs.selfExeDirPathAlloc(allocator) catch |err| switch (err) {
+        return std.process.executableDirPathAlloc(io, allocator) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => null,
         };
