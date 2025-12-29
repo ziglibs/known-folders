@@ -56,7 +56,7 @@ pub fn getPath(
 ## Installation
 
 > [!NOTE]
-> The supported Zig version is `0.15.x`.
+> The default branch requires Zig `0.16.0-dev.1859+212968c57` or later.
 
 Initialize a `zig build` project if you haven't already.
 
