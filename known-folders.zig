@@ -383,7 +383,7 @@ const TestingSystem = struct {
 
         const prefix = std.base64.standard.Encoder.encode(buffer, kv.path);
 
-        tmp_dir.dir.writeFile(.{
+        tmp_dir.dir.writeFile(io, .{
             .sub_path = prefix,
             .data = data,
         }) catch |err| {
@@ -391,8 +391,7 @@ const TestingSystem = struct {
             std.debug.panic("failed to create file './{s}/{s}' which represents '{s}': {}", .{ &tmp_dir.sub_path, prefix, kv.path, err });
         };
 
-        const dir: std.Io.Dir = .{ .handle = tmp_dir.dir.fd };
-        return try dir.openFile(io, prefix, .{});
+        return try tmp_dir.dir.openFile(io, prefix, .{});
     }
 };
 
