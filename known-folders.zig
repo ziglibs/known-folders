@@ -109,7 +109,7 @@ pub const KnownFolder = enum {
 };
 
 // Explicitly define possible errors to make it clearer what callers need to handle
-pub const Error = error{ ParseError, OutOfMemory };
+pub const Error = error{ ParseError, OutOfMemory, Unexpected };
 
 pub const KnownFolderConfig = struct {
     xdg_force_default: bool = false,
@@ -120,10 +120,11 @@ pub const KnownFolderConfig = struct {
 pub fn open(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ,
     folder: KnownFolder,
     args: std.Io.Dir.OpenOptions,
 ) (std.Io.Dir.OpenError || Error)!?std.Io.Dir {
-    const path = try getPath(io, allocator, folder) orelse return null;
+    const path = try getPath(io, allocator, environ, folder) orelse return null;
     defer allocator.free(path);
     return try std.Io.Dir.cwd().openDir(io, path, args);
 }
@@ -132,11 +133,12 @@ pub fn open(
 pub fn getPath(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ,
     folder: KnownFolder,
 ) Error!?[]const u8 {
     var system: DefaultSystem = .{};
     defer system.deinit();
-    return getPathInner(DefaultSystem, &system, io, allocator, folder);
+    return getPathInner(DefaultSystem, &system, io, allocator, environ, folder);
 }
 
 fn getPathInner(
@@ -145,6 +147,7 @@ fn getPathInner(
     system: *System,
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ,
     folder: KnownFolder,
 ) Error!?[]const u8 {
     if (folder == .executable_dir) {
@@ -191,8 +194,8 @@ fn getPathInner(
                     }
                 },
                 .by_env => |env_path| {
-                    const env_var = std.process.getEnvVarOwned(allocator, env_path.env_var) catch |err| switch (err) {
-                        error.EnvironmentVariableNotFound => return null,
+                    const env_var = environ.getAlloc(allocator, env_path.env_var) catch |err| switch (err) {
+                        error.EnvironmentVariableMissing => return null,
                         error.InvalidWtf8 => return null,
                         error.OutOfMemory => |e| return e,
                     };
@@ -207,14 +210,14 @@ fn getPathInner(
             }
         },
         .macos => {
-            if (system.config.xdg_on_mac) return try getPathXdg(System, system, io, allocator, folder);
+            if (system.config.xdg_on_mac) return try getPathXdg(System, system, io, allocator, environ, folder);
 
             if (folder == .global_configuration) {
                 // special case because the returned path is absolute
                 return try allocator.dupe(u8, comptime getMacFolderSpec(.global_configuration));
             }
 
-            const home_dir = try system.getenv(allocator, "HOME") orelse return null;
+            const home_dir = try system.getenv(environ, "HOME") orelse return null;
 
             if (folder == .home) {
                 return try allocator.dupe(u8, home_dir);
@@ -225,7 +228,7 @@ fn getPathInner(
         },
 
         // Assume unix derivatives with XDG
-        else => return try getPathXdg(System, system, io, allocator, folder),
+        else => return try getPathXdg(System, system, io, allocator, environ, folder),
     }
 }
 
@@ -235,6 +238,7 @@ fn getPathXdg(
     system: *System,
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ,
     folder: KnownFolder,
 ) Error!?[]const u8 {
     const folder_spec = getXdgFolderSpec(folder);
@@ -244,7 +248,7 @@ fn getPathXdg(
             break :fallback;
 
         const env: []const u8, var env_owned: bool = env_opt: {
-            if (try system.getenv(allocator, folder_spec.env.name)) |env_opt|
+            if (try system.getenv(environ, folder_spec.env.name)) |env_opt|
                 break :env_opt .{ env_opt, false };
 
             if (system.config.xdg_force_default)
@@ -253,8 +257,8 @@ fn getPathXdg(
             if (!folder_spec.env.user_dir)
                 break :fallback;
 
-            const env = xdgUserDirLookup(System, system, io, allocator, folder_spec.env.name) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
+            const env = xdgUserDirLookup(System, system, io, allocator, environ, folder_spec.env.name) catch |err| switch (err) {
+                error.Unexpected, error.OutOfMemory => |e| return e,
                 else => break :fallback,
             } orelse break :fallback;
 
@@ -283,7 +287,7 @@ fn getPathXdg(
 
     const default = folder_spec.default orelse return null;
     if (default[0] == '~') {
-        const home = try system.getenv(allocator, "HOME") orelse return null;
+        const home = try system.getenv(environ, "HOME") orelse return null;
         return try std.fs.path.join(allocator, &.{ home, default[1..] });
     } else {
         return try allocator.dupe(u8, default);
@@ -293,23 +297,19 @@ fn getPathXdg(
 /// Encapsulates all operating system interactions
 const DefaultSystem = struct {
     comptime config: KnownFolderConfig = if (@hasDecl(root, "known_folders_config")) root.known_folders_config else .{},
-    envmap: if (builtin.os.tag == .wasi and !builtin.link_libc) ?std.process.EnvMap else ?void = null,
+    arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
 
     pub fn deinit(system: *DefaultSystem) void {
-        if (builtin.os.tag == .wasi and !builtin.link_libc) {
-            if (system.envmap) |*envmap| envmap.deinit();
-        }
+        system.arena.deinit();
     }
 
     /// Caller does **not** owns the returned memory.
-    pub fn getenv(system: *DefaultSystem, allocator: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
-        if (builtin.os.tag == .wasi and !builtin.link_libc) {
-            if (system.envmap == null) {
-                system.envmap = std.process.getEnvMap(allocator) catch return error.OutOfMemory;
-            }
-            return system.envmap.?.get(key);
-        }
-        return std.posix.getenv(key);
+    pub fn getenv(system: *DefaultSystem, environ: std.process.Environ, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
+        return environ.getAlloc(system.arena.allocator(), key) catch |err| switch (err) {
+            error.EnvironmentVariableMissing => return null,
+            error.InvalidWtf8 => return null,
+            error.OutOfMemory => |e| return e,
+        };
     }
 
     pub fn openFile(_: *DefaultSystem, io: std.Io, dir_path: []const u8, sub_path: []const u8) std.Io.File.OpenError!std.Io.File {
@@ -332,6 +332,7 @@ const TestingSystem = struct {
     files: []const struct { path: []const u8, data: ?[]const u8 } = &.{},
 
     tmp_dir: ?std.testing.TmpDir = null,
+    arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
 
     comptime {
         std.debug.assert(builtin.os.tag != .windows);
@@ -340,16 +341,20 @@ const TestingSystem = struct {
     pub fn deinit(impl: *TestingSystem) void {
         // TODO check which env variables and files have been accessed and fail the test if one was never used.
         if (impl.tmp_dir) |*tmp_dir| tmp_dir.cleanup();
+        impl.arena.deinit();
     }
 
     /// Asserts that the environment variable is specified in `TestingSystem.env_map`.
     ///
     /// Caller does **not** owns the returned memory.
-    pub fn getenv(system: *TestingSystem, allocator: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
+    pub fn getenv(system: *TestingSystem, environ: std.process.Environ, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
         {
+            const allocator = system.arena.allocator();
             // This allocation will simulate the possibility of allocation failure using `std.testing.checkAllAllocationFailures`
             allocator.free(try allocator.alloc(u8, 1));
         }
+
+        _ = environ;
 
         for (system.env_map) |kv| {
             if (std.mem.eql(u8, key, kv.key)) return kv.value;
@@ -414,6 +419,7 @@ fn xdgUserDirLookup(
     system: *System,
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ,
     /// A string that specifies the type of directory.
     ///
     /// Asserts that the folder type is should be one of the following:
@@ -442,8 +448,8 @@ fn xdgUserDirLookup(
             std.mem.eql(u8, folder_name, "VIDEOS"));
     }
 
-    const home_dir: []const u8 = try system.getenv(allocator, "HOME") orelse return null;
-    const maybe_config_home: ?[]const u8 = if (try system.getenv(allocator, "XDG_CONFIG_HOME")) |value|
+    const home_dir: []const u8 = try system.getenv(environ, "HOME") orelse return null;
+    const maybe_config_home: ?[]const u8 = if (try system.getenv(environ, "XDG_CONFIG_HOME")) |value|
         if (value.len != 0) value else null
     else
         null;
@@ -695,6 +701,7 @@ fn getXdgFolderSpec(folder: KnownFolder) XdgFolderSpec {
 
 const GetPathTestParams = struct {
     system: TestingSystem,
+    environ: std.process.Environ,
     folder: KnownFolder,
     expected: ?[]const u8,
 };
@@ -705,7 +712,7 @@ fn testGetPath(get_path_params: GetPathTestParams) !void {
             var system = params.system;
             defer system.deinit();
 
-            const actual = try getPathInner(TestingSystem, &system, std.testing.io, allocator, params.folder);
+            const actual = try getPathInner(TestingSystem, &system, std.testing.io, allocator, params.environ, params.folder);
             defer if (actual) |path| allocator.free(path);
 
             if (params.expected == null and actual == null) return;
@@ -736,18 +743,21 @@ test "getPath - no HOME" {
         .system = system,
         .folder = .home,
         .expected = null,
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
         .expected = "/home/janedoe/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
         .expected = null,
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -766,6 +776,7 @@ test "getPath - find HOME without accessing XDG_CONFIG_HOME" {
         .system = system,
         .folder = .home,
         .expected = "/home/janedoe",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -790,30 +801,35 @@ test "getPath - no user-dirs.dirs" {
         .system = system,
         .folder = .home,
         .expected = "/home/janedoe",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
         .expected = "/home/janedoe/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
         .expected = "/mnt/drive/downloads",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .data,
         .expected = "/home/janedoe/.local/share",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .fonts,
         .expected = "/home/janedoe/.local/share/fonts",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -835,12 +851,14 @@ test "getPath - XDG_DATA_HOME with suffix" {
         .system = system,
         .folder = .fonts,
         .expected = "/mnt/data/fonts",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .app_menu,
         .expected = "/mnt/data/applications",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -875,18 +893,21 @@ test "getPath - user-dirs.dirs" {
         .system = system,
         .folder = .desktop,
         .expected = "/mnt/home/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
         .expected = "/home/janedoe/Downloads",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .documents,
         .expected = "/home/janedoe/xdg/Documents",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -914,6 +935,7 @@ test "getPath - user-dirs.dirs - XDG_CONFIG_HOME" {
         .system = system,
         .folder = .desktop,
         .expected = "/mnt/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -942,6 +964,7 @@ test "getPath - user-dirs.dirs - duplicate config" {
         .system = system,
         .folder = .desktop,
         .expected = "/mnt/second/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -970,6 +993,7 @@ test "getPath - user-dirs.dirs - trailing newline" {
         .system = system,
         .folder = .videos,
         .expected = "/mnt/Videos",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -999,12 +1023,14 @@ test "getPath - user-dirs.dirs - escaped path" {
         .system = system,
         .folder = .desktop,
         .expected = "/mnt/\\/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
         .expected = "/mnt/ /Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -1044,24 +1070,28 @@ test "getPath - user-dirs.dirs - very long line" {
         .system = system,
         .folder = .desktop,
         .expected = xdg_dir_desktop,
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
         .expected = xdg_dir_download,
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .documents,
         .expected = xdg_dir_documents_truncated,
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .music,
         .expected = "/home/janedoe/music",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -1089,6 +1119,7 @@ test "getPath - user-dirs.dirs - invalid path" {
         .system = system,
         .folder = .desktop,
         .expected = "/home/janedoe/Desktop", // fallback
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -1107,6 +1138,7 @@ test "getPath - .global_configuration" {
         .system = system,
         .folder = .global_configuration,
         .expected = "/etc",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -1125,6 +1157,7 @@ test "getPath - .global_configuration with XDG_CONFIG_DIRS" {
         .system = system,
         .folder = .global_configuration,
         .expected = "/mnt/etc",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     system.env_map = &.{
@@ -1134,6 +1167,7 @@ test "getPath - .global_configuration with XDG_CONFIG_DIRS" {
         .system = system,
         .folder = .global_configuration,
         .expected = "/mnt/first",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -1155,18 +1189,21 @@ test "getPath - with xdg_force_default=true" {
         .system = system,
         .folder = .home,
         .expected = "/home/janedoe",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
         .expected = "/home/janedoe/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .global_configuration,
         .expected = "/etc",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -1185,18 +1222,21 @@ test "getPath - with xdg_on_mac=false" {
         .system = system,
         .folder = .desktop,
         .expected = "/home/janedoe/Desktop",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .fonts,
         .expected = "/home/janedoe/Library/Fonts",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .videos,
         .expected = "/home/janedoe/Movies",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
@@ -1216,12 +1256,13 @@ test "getPath - .global_configuration with xdg_on_mac=false" {
         .system = system,
         .folder = .global_configuration,
         .expected = "/Library/Preferences",
+        .environ = std.testing.io_instance.environ.process_environ,
     });
 }
 
 test "query each known folders" {
     for (std.meta.tags(KnownFolder)) |folder| {
-        const path_or_null = try getPath(std.testing.io, std.testing.allocator, folder);
+        const path_or_null = try getPath(std.testing.io, std.testing.allocator, std.testing.io_instance.environ.process_environ, folder);
         defer if (path_or_null) |path| std.testing.allocator.free(path);
         std.debug.print("{s} => {?s}\n", .{ @tagName(folder), path_or_null });
     }
@@ -1231,7 +1272,7 @@ test "open each known folders" {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
     for (std.meta.tags(KnownFolder)) |folder| {
-        var dir_or_null = open(std.testing.io, std.testing.allocator, folder, .{}) catch |e| switch (e) {
+        var dir_or_null = open(std.testing.io, std.testing.allocator, std.testing.io_instance.environ.process_environ, folder, .{}) catch |e| switch (e) {
             error.FileNotFound => return,
             else => return e,
         };

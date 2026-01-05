@@ -41,6 +41,7 @@ pub const KnownFolderConfig = struct {
 pub fn open(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ,
     folder: KnownFolder,
     args: std.Io.Dir.OpenOptions,
 ) (std.Io.Dir.OpenError || Error)!?std.Io.Dir;
@@ -49,6 +50,7 @@ pub fn open(
 pub fn getPath(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ,
     folder: KnownFolder,
 ) Error!?[]const u8;
 ```
@@ -56,7 +58,7 @@ pub fn getPath(
 ## Installation
 
 > [!NOTE]
-> The default branch requires Zig `0.16.0-dev.1859+212968c57` or later.
+> The default branch requires Zig `0.16.0-dev.1993+50422d5c3` or later.
 
 Initialize a `zig build` project if you haven't already.
 
