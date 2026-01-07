@@ -108,8 +108,8 @@ pub const KnownFolder = enum {
     executable_dir,
 };
 
-// Explicitly define possible errors to make it clearer what callers need to handle
-pub const Error = error{ ParseError, OutOfMemory };
+/// Most errors will not be reported here but instead cause null to be returned.
+pub const Error = std.mem.Allocator.Error || std.Io.Cancelable;
 
 pub const KnownFolderConfig = struct {
     xdg_force_default: bool = false,
@@ -152,7 +152,7 @@ fn getPathInner(
     if (folder == .executable_dir) {
         if (builtin.os.tag == .wasi) return null;
         return std.process.executableDirPathAlloc(io, allocator) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
+            error.OutOfMemory, error.Canceled => |e| return e,
             else => null,
         };
     }
@@ -251,7 +251,7 @@ fn getPathXdg(
                 break :fallback;
 
             const env = xdgUserDirLookup(System, system, io, allocator, folder_spec.env.name) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
+                error.OutOfMemory, error.Canceled => |e| return e,
                 else => break :fallback,
             } orelse break :fallback;
 
@@ -382,7 +382,7 @@ const TestingSystem = struct {
 const UserDirLookupError =
     std.mem.Allocator.Error ||
     std.Io.File.OpenError ||
-    std.posix.ReadError;
+    std.Io.File.Reader.Error;
 
 const xdg_user_dir_lookup_line_buffer_size: usize = 511;
 
@@ -537,7 +537,7 @@ const LineIterator = struct {
         };
     }
 
-    fn next(it: *LineIterator, buffer: []u8) std.posix.ReadError!?[:'\n']const u8 {
+    fn next(it: *LineIterator, buffer: []u8) std.Io.File.Reader.Error!?[:'\n']const u8 {
         if (!it.keep_reading) return null;
 
         const reader = &it.file_reader.interface;
