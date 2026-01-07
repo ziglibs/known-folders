@@ -120,10 +120,11 @@ pub const KnownFolderConfig = struct {
 pub fn open(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ.Map,
     folder: KnownFolder,
     args: std.Io.Dir.OpenOptions,
 ) (std.Io.Dir.OpenError || Error)!?std.Io.Dir {
-    const path = try getPath(io, allocator, folder) orelse return null;
+    const path = try getPath(io, allocator, environ, folder) orelse return null;
     defer allocator.free(path);
     return try std.Io.Dir.cwd().openDir(io, path, args);
 }
@@ -132,9 +133,10 @@ pub fn open(
 pub fn getPath(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ.Map,
     folder: KnownFolder,
 ) Error!?[]const u8 {
-    var system: DefaultSystem = .{};
+    var system: DefaultSystem = .{ .environ = environ };
     defer system.deinit();
     return getPathInner(DefaultSystem, &system, io, allocator, folder);
 }
@@ -191,17 +193,12 @@ fn getPathInner(
                     }
                 },
                 .by_env => |env_path| {
-                    const env_var = std.process.getEnvVarOwned(allocator, env_path.env_var) catch |err| switch (err) {
-                        error.EnvironmentVariableNotFound => return null,
-                        error.InvalidWtf8 => return null,
-                        error.OutOfMemory => |e| return e,
-                    };
+                    const env_var = system.getenv(env_path.env_var) orelse return null;
 
                     if (env_path.subdir) |sub_dir| {
-                        defer allocator.free(env_var);
                         return try std.fs.path.join(allocator, &[_][]const u8{ env_var, sub_dir });
                     } else {
-                        return env_var;
+                        return try allocator.dupe(u8, env_var);
                     }
                 },
             }
@@ -214,7 +211,7 @@ fn getPathInner(
                 return try allocator.dupe(u8, comptime getMacFolderSpec(.global_configuration));
             }
 
-            const home_dir = try system.getenv(allocator, "HOME") orelse return null;
+            const home_dir = system.getenv("HOME") orelse return null;
 
             if (folder == .home) {
                 return try allocator.dupe(u8, home_dir);
@@ -244,7 +241,7 @@ fn getPathXdg(
             break :fallback;
 
         const env: []const u8, var env_owned: bool = env_opt: {
-            if (try system.getenv(allocator, folder_spec.env.name)) |env_opt|
+            if (system.getenv(folder_spec.env.name)) |env_opt|
                 break :env_opt .{ env_opt, false };
 
             if (system.config.xdg_force_default)
@@ -283,7 +280,7 @@ fn getPathXdg(
 
     const default = folder_spec.default orelse return null;
     if (default[0] == '~') {
-        const home = try system.getenv(allocator, "HOME") orelse return null;
+        const home = system.getenv("HOME") orelse return null;
         return try std.fs.path.join(allocator, &.{ home, default[1..] });
     } else {
         return try allocator.dupe(u8, default);
@@ -293,23 +290,15 @@ fn getPathXdg(
 /// Encapsulates all operating system interactions
 const DefaultSystem = struct {
     comptime config: KnownFolderConfig = if (@hasDecl(root, "known_folders_config")) root.known_folders_config else .{},
-    envmap: if (builtin.os.tag == .wasi and !builtin.link_libc) ?std.process.EnvMap else ?void = null,
+    environ: std.process.Environ.Map,
 
     pub fn deinit(system: *DefaultSystem) void {
-        if (builtin.os.tag == .wasi and !builtin.link_libc) {
-            if (system.envmap) |*envmap| envmap.deinit();
-        }
+        _ = system;
     }
 
     /// Caller does **not** owns the returned memory.
-    pub fn getenv(system: *DefaultSystem, allocator: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
-        if (builtin.os.tag == .wasi and !builtin.link_libc) {
-            if (system.envmap == null) {
-                system.envmap = std.process.getEnvMap(allocator) catch return error.OutOfMemory;
-            }
-            return system.envmap.?.get(key);
-        }
-        return std.posix.getenv(key);
+    pub fn getenv(system: *DefaultSystem, key: []const u8) ?[]const u8 {
+        return system.environ.get(key);
     }
 
     pub fn openFile(_: *DefaultSystem, io: std.Io, dir_path: []const u8, sub_path: []const u8) std.Io.File.OpenError!std.Io.File {
@@ -345,12 +334,7 @@ const TestingSystem = struct {
     /// Asserts that the environment variable is specified in `TestingSystem.env_map`.
     ///
     /// Caller does **not** owns the returned memory.
-    pub fn getenv(system: *TestingSystem, allocator: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error!?[]const u8 {
-        {
-            // This allocation will simulate the possibility of allocation failure using `std.testing.checkAllAllocationFailures`
-            allocator.free(try allocator.alloc(u8, 1));
-        }
-
+    pub fn getenv(system: *TestingSystem, key: []const u8) ?[]const u8 {
         for (system.env_map) |kv| {
             if (std.mem.eql(u8, key, kv.key)) return kv.value;
         }
@@ -442,8 +426,8 @@ fn xdgUserDirLookup(
             std.mem.eql(u8, folder_name, "VIDEOS"));
     }
 
-    const home_dir: []const u8 = try system.getenv(allocator, "HOME") orelse return null;
-    const maybe_config_home: ?[]const u8 = if (try system.getenv(allocator, "XDG_CONFIG_HOME")) |value|
+    const home_dir: []const u8 = system.getenv("HOME") orelse return null;
+    const maybe_config_home: ?[]const u8 = if (system.getenv("XDG_CONFIG_HOME")) |value|
         if (value.len != 0) value else null
     else
         null;
@@ -1220,8 +1204,11 @@ test "getPath - .global_configuration with xdg_on_mac=false" {
 }
 
 test "query each known folders" {
+    var environ = try std.testing.io_instance.environ.process_environ.createMap(std.testing.allocator);
+    defer environ.deinit();
+
     for (std.meta.tags(KnownFolder)) |folder| {
-        const path_or_null = try getPath(std.testing.io, std.testing.allocator, folder);
+        const path_or_null = try getPath(std.testing.io, std.testing.allocator, environ, folder);
         defer if (path_or_null) |path| std.testing.allocator.free(path);
         std.debug.print("{s} => {?s}\n", .{ @tagName(folder), path_or_null });
     }
@@ -1230,8 +1217,11 @@ test "query each known folders" {
 test "open each known folders" {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
+    var environ = try std.testing.io_instance.environ.process_environ.createMap(std.testing.allocator);
+    defer environ.deinit();
+
     for (std.meta.tags(KnownFolder)) |folder| {
-        var dir_or_null = open(std.testing.io, std.testing.allocator, folder, .{}) catch |e| switch (e) {
+        var dir_or_null = open(std.testing.io, std.testing.allocator, environ, folder, .{}) catch |e| switch (e) {
             error.FileNotFound => return,
             else => return e,
         };
