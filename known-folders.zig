@@ -4,104 +4,104 @@ const root = @import("root");
 
 pub const KnownFolder = enum {
     /// - Windows default: `%SystemDrive%\Users\%USERNAME%`
-    /// - MacOS default: `$HOME`
-    /// - *nix default: `$HOME`
+    /// -   MacOS default: `$HOME`
+    /// -    *nix default: `$HOME`
     home,
     /// - Windows default: `%USERPROFILE%\Documents`
-    /// - MacOS default: `$HOME/Documents`
-    /// - *nix default: `$HOME/Documents`
-    /// - XDG directory: `XDG_DOCUMENTS_DIR`
+    /// -   MacOS default: `$HOME/Documents`
+    /// -    *nix default: `$HOME/Documents`
+    /// -   XDG directory: `XDG_DOCUMENTS_DIR`
     documents,
     /// - Windows default: `%USERPROFILE%\Pictures`
-    /// - MacOS default: `$HOME/Pictures`
-    /// - *nix default: `$HOME/Pictures`
-    /// - XDG directory: `XDG_PICTURES_DIR`
+    /// -   MacOS default: `$HOME/Pictures`
+    /// -    *nix default: `$HOME/Pictures`
+    /// -   XDG directory: `XDG_PICTURES_DIR`
     pictures,
     /// - Windows default: `%USERPROFILE%\Music`
-    /// - MacOS default: `$HOME/Music`
-    /// - *nix default: `$HOME/Music`
-    /// - XDG directory: `XDG_MUSIC_DIR`
+    /// -   MacOS default: `$HOME/Music`
+    /// -    *nix default: `$HOME/Music`
+    /// -   XDG directory: `XDG_MUSIC_DIR`
     music,
     /// - Windows default: `%USERPROFILE%\Videos`
-    /// - MacOS default: `$HOME/Movies`
-    /// - *nix default: `$HOME/Videos`
-    /// - XDG directory: `XDG_VIDEOS_DIR`
+    /// -   MacOS default: `$HOME/Movies`
+    /// -    *nix default: `$HOME/Videos`
+    /// -   XDG directory: `XDG_VIDEOS_DIR`
     videos,
     /// - Windows default: `%USERPROFILE%\Desktop`
-    /// - MacOS default: `$HOME/Desktop`
-    /// - *nix default: `$HOME/Desktop`
-    /// - XDG directory: `XDG_DESKTOP_DIR`
+    /// -   MacOS default: `$HOME/Desktop`
+    /// -    *nix default: `$HOME/Desktop`
+    /// -   XDG directory: `XDG_DESKTOP_DIR`
     desktop,
     /// - Windows default: `%USERPROFILE%\Downloads`
-    /// - MacOS default: `$HOME/Downloads`
-    /// - *nix default: `$HOME/Downloads`
-    /// - XDG directory: `XDG_DOWNLOAD_DIR`
+    /// -   MacOS default: `$HOME/Downloads`
+    /// -    *nix default: `$HOME/Downloads`
+    /// -   XDG directory: `XDG_DOWNLOAD_DIR`
     downloads,
     /// - Windows default: `%PUBLIC%` (`%SystemDrive%\Users\Public`)
-    /// - MacOS default: `$HOME/Public`
-    /// - *nix default: `$HOME/Public`
-    /// - XDG directory: `XDG_PUBLICSHARE_DIR`
+    /// -   MacOS default: `$HOME/Public`
+    /// -    *nix default: `$HOME/Public`
+    /// -   XDG directory: `XDG_PUBLICSHARE_DIR`
     public,
     /// - Windows default: `%windir%\Fonts`
-    /// - MacOS default: `$HOME/Library/Fonts`
-    /// - *nix default: `$HOME/.local/share/fonts`
-    /// - XDG directory: `XDG_DATA_HOME/fonts`
+    /// -   MacOS default: `$HOME/Library/Fonts`
+    /// -    *nix default: `$HOME/.local/share/fonts`
+    /// -   XDG directory: `XDG_DATA_HOME/fonts`
     fonts,
     /// - Windows default: `%APPDATA%\Microsoft\Windows\Start Menu`
-    /// - MacOS default: `$HOME/Applications`
-    /// - *nix default: `$HOME/.local/share/applications`
-    /// - XDG directory: `XDG_DATA_HOME/applications`
+    /// -   MacOS default: `$HOME/Applications`
+    /// -    *nix default: `$HOME/.local/share/applications`
+    /// -   XDG directory: `XDG_DATA_HOME/applications`
     app_menu,
     /// The base directory relative to which user-specific non-essential (cached) data should be written.
     ///
     /// - Windows default: `%LOCALAPPDATA%\Temp`
-    /// - MacOS default: `$HOME/Library/Caches`
-    /// - *nix default: `$HOME/.cache`
-    /// - XDG directory: `XDG_CACHE_HOME`
+    /// -   MacOS default: `$HOME/Library/Caches`
+    /// -    *nix default: `$HOME/.cache`
+    /// -   XDG directory: `XDG_CACHE_HOME`
     cache,
     /// The base directory relative to which user-specific configuration files should be written.
     ///
     /// - Windows default: `%APPDATA%` (`%USERPROFILE%\AppData\Roaming`)
-    /// - MacOS default: `$HOME/Library/Preferences`
-    /// - *nix default: `$HOME/.config`
-    /// - XDG directory: `XDG_CONFIG_HOME`
+    /// -   MacOS default: `$HOME/Library/Preferences`
+    /// -    *nix default: `$HOME/.config`
+    /// -   XDG directory: `XDG_CONFIG_HOME`
     roaming_configuration,
     /// The base directory relative to which user-specific configuration files should be written.
     ///
     /// - Windows default: `%LOCALAPPDATA%` (`%USERPROFILE%\AppData\Local`)
-    /// - MacOS default: `$HOME/Library/Application Support`
-    /// - *nix default: `$HOME/.config`
-    /// - XDG directory: `XDG_CONFIG_HOME`
+    /// -   MacOS default: `$HOME/Library/Application Support`
+    /// -    *nix default: `$HOME/.config`
+    /// -   XDG directory: `XDG_CONFIG_HOME`
     local_configuration,
     /// The base directory relative to which global configuration files should be searched.
     ///
     /// - Windows default: `%ALLUSERSPROFILE%` (`%ProgramData%`, `%SystemDrive%\ProgramData`)
-    /// - MacOS default: `/Library/Preferences`
-    /// - *nix default: `/etc`
-    /// - XDG directory: `XDG_CONFIG_DIRS` (first directory)
+    /// -   MacOS default: `/Library/Preferences`
+    /// -    *nix default: `/etc`
+    /// -   XDG directory: `XDG_CONFIG_DIRS` (first directory)
     global_configuration,
     /// The base directory relative to which user-specific data files should be written.
     ///
     /// - Windows default: `%LOCALAPPDATA%\Temp`
-    /// - MacOS default: `$HOME/Library/Application Support`
-    /// - *nix default: `$HOME/.local/share`
-    /// - XDG directory: `XDG_DATA_HOME`
+    /// -   MacOS default: `$HOME/Library/Application Support`
+    /// -    *nix default: `$HOME/.local/share`
+    /// -   XDG directory: `XDG_DATA_HOME`
     ///
     /// XDG's definition of `XDG_DATA_HOME`: There is a set of preference ordered base directories
     data,
     /// The base directory relative to which user-specific log files should be written.
     ///
     /// - Windows default: `%LOCALAPPDATA%\Temp`
-    /// - MacOS default: `$HOME/Library/Logs`
-    /// - *nix default: `$HOME/.local/state`
-    /// - XDG directory: `XDG_STATE_HOME`
+    /// -   MacOS default: `$HOME/Library/Logs`
+    /// -    *nix default: `$HOME/.local/state`
+    /// -   XDG directory: `XDG_STATE_HOME`
     logs,
     /// The base directory relative to which user-specific runtime files and other file objects should be placed.
     ///
     /// - Windows default: `%LOCALAPPDATA%\Temp`
-    /// - MacOS default: `$HOME/Library/Application Support`
-    /// - *nix default: no default (only set with `XDG_RUNTIME_DIR`)
-    /// - XDG directory: `XDG_RUNTIME_DIR`
+    /// -   MacOS default: `$HOME/Library/Application Support`
+    /// -    *nix default: no default (only set with `XDG_RUNTIME_DIR`)
+    /// -   XDG directory: `XDG_RUNTIME_DIR`
     ///
     runtime,
     /// Get the directory that contains the current executable.
