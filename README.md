@@ -72,7 +72,10 @@ zig fetch --save git+https://github.com/ziglibs/known-folders.git
 You can then import `known-folders` in your `build.zig` with:
 
 ```zig
-const known_folders = b.dependency("known_folders", .{}).module("known-folders");
+const known_folders = b.dependency("known_folders", .{
+    .target = target,
+    .optimize = optimize,
+}).module("known-folders");
 const exe = b.addExecutable(...);
 // This adds the known-folders module to the executable which can then be imported with `@import("known-folders")`
 exe.root_module.addImport("known-folders", known_folders);
