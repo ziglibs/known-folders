@@ -27,7 +27,6 @@ pub const KnownFolder = enum {
     data,
     logs,
     runtime,
-    executable_dir,
 };
 
 pub const Error = error{ ParseError, OutOfMemory };

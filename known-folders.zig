@@ -104,8 +104,6 @@ pub const KnownFolder = enum {
     /// -   XDG directory: `XDG_RUNTIME_DIR`
     ///
     runtime,
-    /// Get the directory that contains the current executable.
-    executable_dir,
 };
 
 /// Most errors will not be reported here but instead cause null to be returned.
@@ -149,14 +147,6 @@ fn getPathInner(
     allocator: std.mem.Allocator,
     folder: KnownFolder,
 ) Error!?[]const u8 {
-    if (folder == .executable_dir) {
-        if (builtin.os.tag == .wasi) return null;
-        return std.process.executableDirPathAlloc(io, allocator) catch |err| switch (err) {
-            error.OutOfMemory, error.Canceled => |e| return e,
-            else => null,
-        };
-    }
-
     switch (builtin.os.tag) {
         .windows => {
             const funcs = struct {
@@ -595,7 +585,6 @@ const WindowsFolderSpec = union(enum) {
 
 fn getWindowsFolderSpec(folder: KnownFolder) WindowsFolderSpec {
     return switch (folder) {
-        .executable_dir => unreachable,
         .home => .{ .by_guid = comptime std.os.windows.GUID.parse("{5E6C858F-0E22-4760-9AFE-EA3317B67173}") }, // FOLDERID_Profile
         .documents => .{ .by_guid = comptime std.os.windows.GUID.parse("{FDD39AD0-238F-46AF-ADB4-6C85480369C7}") }, // FOLDERID_Documents
         .pictures => .{ .by_guid = comptime std.os.windows.GUID.parse("{33E28130-4E1E-4676-835A-98395C3BC3BB}") }, // FOLDERID_Pictures
@@ -619,7 +608,6 @@ fn getWindowsFolderSpec(folder: KnownFolder) WindowsFolderSpec {
 /// The default value for `KnownFolder.global_configuration` is the only absolute path. All others default values are relative to the home directory.
 fn getMacFolderSpec(folder: KnownFolder) []const u8 {
     return switch (folder) {
-        .executable_dir => unreachable,
         .home => unreachable,
         .documents => "Documents",
         .pictures => "Pictures",
@@ -656,7 +644,6 @@ const XdgFolderSpec = struct {
 /// The default value for `KnownFolder.global_configuration` is the only absolute path. All others default values are relative to the home directory.
 fn getXdgFolderSpec(folder: KnownFolder) XdgFolderSpec {
     return switch (folder) {
-        .executable_dir => unreachable,
         .home => .{ .env = .{ .name = "HOME", .user_dir = false, .suffix = null }, .default = null },
         .documents => .{ .env = .{ .name = "XDG_DOCUMENTS_DIR", .user_dir = true, .suffix = null }, .default = "~/Documents" },
         .pictures => .{ .env = .{ .name = "XDG_PICTURES_DIR", .user_dir = true, .suffix = null }, .default = "~/Pictures" },
