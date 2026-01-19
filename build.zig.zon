@@ -1,7 +1,7 @@
 .{
     .name = .known_folders,
     .version = "0.0.0",
-    .minimum_zig_version = "0.16.0-dev.1976+8e091047b",
+    .minimum_zig_version = "0.16.0-dev.2255+d417441f4",
     .dependencies = .{},
     .paths = .{
         "build.zig",
