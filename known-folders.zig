@@ -1219,5 +1219,5 @@ test "open each known folders" {
 }
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
