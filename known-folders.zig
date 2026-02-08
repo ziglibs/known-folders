@@ -162,13 +162,16 @@ fn getPathInner(
             switch (getWindowsFolderSpec(folder)) {
                 .by_guid => |guid| {
                     var dir_path_ptr: [*:0]u16 = undefined;
+                    const KF_FLAG_CREATE = 32768;
+                    const S_OK = 0;
+                    const E_OUTOFMEMORY = @as(c_long, @bitCast(@as(c_ulong, 0x8007000E)));
                     switch (funcs.SHGetKnownFolderPath(
                         &guid,
-                        std.os.windows.KF_FLAG_CREATE, // TODO: Chose sane option here?
+                        KF_FLAG_CREATE, // TODO: Chose sane option here?
                         null,
                         &dir_path_ptr,
                     )) {
-                        std.os.windows.S_OK => {
+                        S_OK => {
                             defer funcs.CoTaskMemFree(@ptrCast(dir_path_ptr));
                             const global_dir = std.unicode.utf16LeToUtf8Alloc(allocator, std.mem.span(dir_path_ptr)) catch |err| switch (err) {
                                 error.UnexpectedSecondSurrogateHalf => return null,
@@ -178,7 +181,7 @@ fn getPathInner(
                             };
                             return global_dir;
                         },
-                        std.os.windows.E_OUTOFMEMORY => return error.OutOfMemory,
+                        E_OUTOFMEMORY => return error.OutOfMemory,
                         else => return null,
                     }
                 },
