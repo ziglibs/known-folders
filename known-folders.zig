@@ -254,7 +254,7 @@ fn getPathXdg(
         defer if (env_owned) allocator.free(env);
 
         if (folder_spec.env.suffix) |suffix| {
-            return try std.fs.path.join(allocator, &.{ env, suffix });
+            return try std.Io.Dir.path.join(allocator, &.{ env, suffix });
         }
 
         // XDG_CONFIG_DIRS is a sequence of directories that are separated with ':'
@@ -275,7 +275,7 @@ fn getPathXdg(
     const default = folder_spec.default orelse return null;
     if (default[0] == '~') {
         const home = system.getenv("HOME") orelse return null;
-        return try std.fs.path.join(allocator, &.{ home, default[1..] });
+        return try std.Io.Dir.path.join(allocator, &.{ home, default[1..] });
     } else {
         return try allocator.dupe(u8, default);
     }
