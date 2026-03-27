@@ -212,7 +212,7 @@ fn getPathInner(
             }
 
             const path = getMacFolderSpec(folder);
-            return try std.fs.path.join(allocator, &.{ home_dir, path });
+            return try std.Io.Dir.path.join(allocator, &.{ home_dir, path });
         },
 
         // Assume unix derivatives with XDG
@@ -338,7 +338,7 @@ const TestingSystem = struct {
 
     /// Asserts that the file is specified in `TestingSystem.files`.
     pub fn openFile(system: *TestingSystem, io: std.Io, dir_path: []const u8, sub_path: []const u8) std.Io.File.OpenError!std.Io.File {
-        const file_path = std.fs.path.join(std.testing.allocator, &.{ dir_path, sub_path }) catch @panic("OOM");
+        const file_path = std.Io.Dir.path.join(std.testing.allocator, &.{ dir_path, sub_path }) catch @panic("OOM");
         defer std.testing.allocator.free(file_path);
 
         const kv = for (system.files) |kv| {
