@@ -149,13 +149,14 @@ fn getPathInner(
 ) Error!?[]const u8 {
     switch (builtin.os.tag) {
         .windows => {
+            const HRESULT = c_long;
             const funcs = struct {
                 extern "shell32" fn SHGetKnownFolderPath(
                     rfid: *const std.os.windows.GUID,
                     dwFlags: std.os.windows.DWORD,
                     hToken: ?std.os.windows.HANDLE,
                     ppszPathL: *std.os.windows.PWSTR,
-                ) callconv(.winapi) std.os.windows.HRESULT;
+                ) callconv(.winapi) HRESULT;
                 extern "ole32" fn CoTaskMemFree(pv: std.os.windows.LPVOID) callconv(.winapi) void;
             };
 
