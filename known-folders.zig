@@ -190,7 +190,7 @@ fn getPathInner(
                     const env_var = system.getenv(env_path.env_var) orelse return null;
 
                     if (env_path.subdir) |sub_dir| {
-                        return try std.fs.path.join(allocator, &[_][]const u8{ env_var, sub_dir });
+                        return try std.Io.Dir.path.join(allocator, &[_][]const u8{ env_var, sub_dir });
                     } else {
                         return try allocator.dupe(u8, env_var);
                     }
