@@ -29,7 +29,7 @@ pub const KnownFolder = enum {
     runtime,
 };
 
-pub const Error = error{ ParseError, OutOfMemory };
+pub const Error = std.mem.Allocator.Error || std.Io.Cancelable;
 
 pub const KnownFolderConfig = struct {
     xdg_force_default: bool = false,
@@ -40,6 +40,7 @@ pub const KnownFolderConfig = struct {
 pub fn open(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ.Map,
     folder: KnownFolder,
     args: std.Io.Dir.OpenOptions,
 ) (std.Io.Dir.OpenError || Error)!?std.Io.Dir;
@@ -48,6 +49,7 @@ pub fn open(
 pub fn getPath(
     io: std.Io,
     allocator: std.mem.Allocator,
+    environ: std.process.Environ.Map,
     folder: KnownFolder,
 ) Error!?[]const u8;
 ```
