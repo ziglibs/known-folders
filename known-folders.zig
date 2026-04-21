@@ -1195,7 +1195,7 @@ test "getPath - .global_configuration with xdg_on_mac=false" {
 }
 
 test "query each known folders" {
-    var environ = try std.testing.io_instance.environ.process_environ.createMap(std.testing.allocator);
+    var environ = try std.testing.environ.createMap(std.testing.allocator);
     defer environ.deinit();
 
     for (std.meta.tags(KnownFolder)) |folder| {
@@ -1208,7 +1208,7 @@ test "query each known folders" {
 test "open each known folders" {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
-    var environ = try std.testing.io_instance.environ.process_environ.createMap(std.testing.allocator);
+    var environ = try std.testing.environ.createMap(std.testing.allocator);
     defer environ.deinit();
 
     for (std.meta.tags(KnownFolder)) |folder| {
