@@ -118,7 +118,7 @@ pub const KnownFolderConfig = struct {
 pub fn open(
     io: std.Io,
     allocator: std.mem.Allocator,
-    environ: std.process.Environ.Map,
+    environ: *const std.process.Environ.Map,
     folder: KnownFolder,
     args: std.Io.Dir.OpenOptions,
 ) (std.Io.Dir.OpenError || Error)!?std.Io.Dir {
@@ -131,7 +131,7 @@ pub fn open(
 pub fn getPath(
     io: std.Io,
     allocator: std.mem.Allocator,
-    environ: std.process.Environ.Map,
+    environ: *const std.process.Environ.Map,
     folder: KnownFolder,
 ) Error!?[]const u8 {
     var system: DefaultSystem = .{ .environ = environ };
@@ -284,7 +284,7 @@ fn getPathXdg(
 /// Encapsulates all operating system interactions
 const DefaultSystem = struct {
     comptime config: KnownFolderConfig = if (@hasDecl(root, "known_folders_config")) root.known_folders_config else .{},
-    environ: std.process.Environ.Map,
+    environ: *const std.process.Environ.Map,
 
     pub fn deinit(system: *DefaultSystem) void {
         _ = system;
@@ -1199,7 +1199,7 @@ test "query each known folders" {
     defer environ.deinit();
 
     for (std.meta.tags(KnownFolder)) |folder| {
-        const path_or_null = try getPath(std.testing.io, std.testing.allocator, environ, folder);
+        const path_or_null = try getPath(std.testing.io, std.testing.allocator, &environ, folder);
         defer if (path_or_null) |path| std.testing.allocator.free(path);
         std.debug.print("{s} => {?s}\n", .{ @tagName(folder), path_or_null });
     }
@@ -1212,7 +1212,7 @@ test "open each known folders" {
     defer environ.deinit();
 
     for (std.meta.tags(KnownFolder)) |folder| {
-        var dir_or_null = open(std.testing.io, std.testing.allocator, environ, folder, .{}) catch |e| switch (e) {
+        var dir_or_null = open(std.testing.io, std.testing.allocator, &environ, folder, .{}) catch |e| switch (e) {
             error.FileNotFound => return,
             else => return e,
         };

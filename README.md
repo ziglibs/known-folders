@@ -40,7 +40,7 @@ pub const KnownFolderConfig = struct {
 pub fn open(
     io: std.Io,
     allocator: std.mem.Allocator,
-    environ: std.process.Environ.Map,
+    environ: *const std.process.Environ.Map,
     folder: KnownFolder,
     args: std.Io.Dir.OpenOptions,
 ) (std.Io.Dir.OpenError || Error)!?std.Io.Dir;
@@ -49,7 +49,7 @@ pub fn open(
 pub fn getPath(
     io: std.Io,
     allocator: std.mem.Allocator,
-    environ: std.process.Environ.Map,
+    environ: *const std.process.Environ.Map,
     folder: KnownFolder,
 ) Error!?[]const u8;
 ```
