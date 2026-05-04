@@ -987,10 +987,10 @@ test "getPath - user-dirs.dirs - very long line" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const len = "XDG_DESKTOP_DIR  =\"\"".len;
-    const xdg_dir_desktop = "/" ++ "a" ** (xdg_user_dir_lookup_line_buffer_size - len - 1);
-    const xdg_dir_download = "/" ++ "b" ** (xdg_user_dir_lookup_line_buffer_size - len);
-    const xdg_dir_documents = "/" ++ "c" ** (xdg_user_dir_lookup_line_buffer_size - len + 1);
-    const xdg_dir_documents_truncated = "/" ++ "c" ** (xdg_user_dir_lookup_line_buffer_size - len);
+    const xdg_dir_desktop = "/" ++ @as([xdg_user_dir_lookup_line_buffer_size - len - 1]u8, @splat('a'));
+    const xdg_dir_download = "/" ++ @as([xdg_user_dir_lookup_line_buffer_size - len]u8, @splat('b'));
+    const xdg_dir_documents = "/" ++ @as([xdg_user_dir_lookup_line_buffer_size - len + 1]u8, @splat('c'));
+    const xdg_dir_documents_truncated = "/" ++ @as([xdg_user_dir_lookup_line_buffer_size - len]u8, @splat('c'));
 
     var system: TestingSystem = .{
         .config = .{ .xdg_on_mac = true },
