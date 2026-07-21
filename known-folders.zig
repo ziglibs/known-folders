@@ -405,7 +405,8 @@ fn xdgUserDirLookup(
     /// - `XDG_VIDEOS_DIR`
     folder_type: []const u8,
 ) UserDirLookupError!?[]u8 {
-    if (builtin.mode == .Debug) {
+    // Use `builtin.mode == .debug` after upgrading to Zig 0.17.0
+    if (builtin.mode == std.builtin.OptimizeMode.Debug) {
         std.debug.assert(std.mem.startsWith(u8, folder_type, "XDG_"));
         std.debug.assert(std.mem.endsWith(u8, folder_type, "_DIR"));
 
