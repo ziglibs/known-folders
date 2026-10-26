@@ -244,10 +244,10 @@ fn getPathXdg(
             if (!folder_spec.env.user_dir)
                 break :fallback;
 
-            const env = xdgUserDirLookup(System, system, io, allocator, folder_spec.env.name) catch |err| switch (err) {
+            const env = (xdgUserDirLookup(System, system, io, allocator, folder_spec.env.name) catch |err| switch (err) {
                 error.OutOfMemory, error.Canceled => |e| return e,
                 else => break :fallback,
-            } orelse break :fallback;
+            }) orelse break :fallback;
 
             break :env_opt .{ env, true };
         };
