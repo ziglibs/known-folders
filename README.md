@@ -8,6 +8,8 @@
 
 ## API
 
+Some documentation comments have been redacted for brevity and can be found in the source code.
+
 ```zig
 pub const KnownFolder = enum {
     home,
@@ -31,27 +33,22 @@ pub const KnownFolder = enum {
 
 pub const Error = std.mem.Allocator.Error || std.Io.Cancelable;
 
-pub const KnownFolderConfig = struct {
-    xdg_force_default: bool = false,
-    xdg_on_mac: bool = false,
+pub const Options = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    environ: *const std.process.Environ.Map,
+
+    folder: KnownFolder,
+    /// Whether to use macOS standard directories or XDG base directories.
+    xdg_on_mac: bool,
+    xdg_lookup_user_dir: bool = true,
 };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    environ: *const std.process.Environ.Map,
-    folder: KnownFolder,
-    args: std.Io.Dir.OpenOptions,
-) (std.Io.Dir.OpenError || Error)!?std.Io.Dir;
+pub fn open(options: *const Options, args: std.Io.Dir.OpenOptions) (std.Io.Dir.OpenError || Error)!?std.Io.Dir;
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    environ: *const std.process.Environ.Map,
-    folder: KnownFolder,
-) Error!?[]const u8;
+pub fn getPath(options: *const Options) Error!?[]const u8;
 ```
 
 ## Installation
@@ -81,14 +78,4 @@ const known_folders = b.dependency("known_folders", .{
 const exe = b.addExecutable(...);
 // This adds the known-folders module to the executable which can then be imported with `@import("known-folders")`
 exe.root_module.addImport("known-folders", known_folders);
-```
-
-## Configuration
-
-In your root file, add something like this to configure known-folders:
-
-```zig
-pub const known_folders_config = .{
-    .xdg_on_mac = true,
-}
 ```

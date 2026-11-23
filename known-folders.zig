@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const root = @import("root");
 
 pub const KnownFolder = enum {
     /// - Windows default: `%SystemDrive%\Users\%USERNAME%`
@@ -109,45 +108,48 @@ pub const KnownFolder = enum {
 /// Most errors will not be reported here but instead cause null to be returned.
 pub const Error = std.mem.Allocator.Error || std.Io.Cancelable;
 
-pub const KnownFolderConfig = struct {
+pub const Options = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    environ: *const std.process.Environ.Map,
+
+    folder: KnownFolder,
+    /// Whether to use macOS standard directories or XDG base directories. Refer to linked documentation on which option to use. An application may consider supporting both directories simultaniously.
+    ///
+    /// External Documentation:
+    ///
+    /// - [macOS standard directories](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemOverview/FileSystemOverview.html#//apple_ref/doc/uid/TP40010672-CH2-SW6)
+    /// - [XDG base directories](https://specifications.freedesktop.org/basedir/).
+    xdg_on_mac: bool,
+    /// Always return the XDG default directory path.
     xdg_force_default: bool = false,
-    xdg_on_mac: bool = false,
 };
 
 /// Returns a directory handle, or, if the folder does not exist, `null`.
-pub fn open(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    environ: *const std.process.Environ.Map,
-    folder: KnownFolder,
-    args: std.Io.Dir.OpenOptions,
-) (std.Io.Dir.OpenError || Error)!?std.Io.Dir {
-    const path = try getPath(io, allocator, environ, folder) orelse return null;
-    defer allocator.free(path);
+pub fn open(options: *const Options, args: std.Io.Dir.OpenOptions) (std.Io.Dir.OpenError || Error)!?std.Io.Dir {
+    const io = options.io;
+    const gpa = options.gpa;
+    const path = try getPath(options) orelse return null;
+    defer gpa.free(path);
     return try std.Io.Dir.cwd().openDir(io, path, args);
 }
 
 /// Returns the path to the folder or, if the folder does not exist, `null`.
-pub fn getPath(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    environ: *const std.process.Environ.Map,
-    folder: KnownFolder,
-) Error!?[]const u8 {
-    var system: DefaultSystem = .{ .environ = environ };
+pub fn getPath(options: *const Options) Error!?[]const u8 {
+    var system: DefaultSystem = .{ .environ = options.environ };
     defer system.deinit();
-    return getPathInner(DefaultSystem, &system, io, allocator, folder);
+    return getPathWithSystem(DefaultSystem, &system, options);
 }
 
-fn getPathInner(
-    /// `DefaultDefaultSystem` or `TestingDefaultSystem`
+fn getPathWithSystem(
+    /// `DefaultSystem` or `TestingSystem`
     comptime System: type,
     system: *System,
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    folder: KnownFolder,
+    options: *const Options,
 ) Error!?[]const u8 {
-    switch (builtin.os.tag) {
+    const gpa = options.gpa;
+    const folder = options.folder;
+    switch (builtin.target.os.tag) {
         .windows => {
             const HRESULT = c_long;
             const funcs = struct {
@@ -160,7 +162,7 @@ fn getPathInner(
                 extern "ole32" fn CoTaskMemFree(pv: std.os.windows.LPVOID) callconv(.winapi) void;
             };
 
-            switch (getWindowsFolderSpec(folder)) {
+            switch (getWindowsFolderSpec(options.folder)) {
                 .by_guid => |guid| {
                     var dir_path_ptr: [*:0]u16 = undefined;
                     const KF_FLAG_CREATE = 32768;
@@ -174,7 +176,7 @@ fn getPathInner(
                     )) {
                         S_OK => {
                             defer funcs.CoTaskMemFree(@ptrCast(dir_path_ptr));
-                            const global_dir = std.unicode.utf16LeToUtf8Alloc(allocator, std.mem.span(dir_path_ptr)) catch |err| switch (err) {
+                            const global_dir = std.unicode.utf16LeToUtf8Alloc(options.gpa, std.mem.span(dir_path_ptr)) catch |err| switch (err) {
                                 error.UnexpectedSecondSurrogateHalf => return null,
                                 error.ExpectedSecondSurrogateHalf => return null,
                                 error.DanglingSurrogateHalf => return null,
@@ -190,78 +192,79 @@ fn getPathInner(
                     const env_var = system.getenv(env_path.env_var) orelse return null;
 
                     if (env_path.subdir) |sub_dir| {
-                        return try std.Io.Dir.path.join(allocator, &[_][]const u8{ env_var, sub_dir });
+                        return try std.Io.Dir.path.join(gpa, &.{ env_var, sub_dir });
                     } else {
-                        return try allocator.dupe(u8, env_var);
+                        return try gpa.dupe(u8, env_var);
                     }
                 },
             }
         },
         .macos => {
-            if (system.config.xdg_on_mac) return try getPathXdg(System, system, io, allocator, folder);
+            if (options.xdg_on_mac) return try getPathXdg(System, system, options);
 
             if (folder == .global_configuration) {
                 // special case because the returned path is absolute
-                return try allocator.dupe(u8, comptime getMacFolderSpec(.global_configuration));
+                return try gpa.dupe(u8, comptime getMacFolderSpec(.global_configuration));
             }
 
             const home_dir = system.getenv("HOME") orelse return null;
 
             if (folder == .home) {
-                return try allocator.dupe(u8, home_dir);
+                return try gpa.dupe(u8, home_dir);
             }
 
             const path = getMacFolderSpec(folder);
-            return try std.Io.Dir.path.join(allocator, &.{ home_dir, path });
+            return try std.Io.Dir.path.join(gpa, &.{ home_dir, path });
         },
 
         // Assume unix derivatives with XDG
-        else => return try getPathXdg(System, system, io, allocator, folder),
+        else => return try getPathXdg(System, system, options),
     }
 }
 
 fn getPathXdg(
-    /// `DefaultDefaultSystem` or `TestingDefaultSystem`
+    /// `DefaultSystem` or `TestingSystem`
     comptime System: type,
     system: *System,
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    folder: KnownFolder,
+    options: *const Options,
 ) Error!?[]const u8 {
+    const io = options.io;
+    const gpa = options.gpa;
+    const folder = options.folder;
     const folder_spec = getXdgFolderSpec(folder);
 
     fallback: {
-        if (system.config.xdg_force_default and folder != .home)
+        if (options.xdg_force_default and folder != .home)
             break :fallback;
 
         const env: []const u8, var env_owned: bool = env_opt: {
             if (system.getenv(folder_spec.env.name)) |env_opt|
                 break :env_opt .{ env_opt, false };
 
-            if (system.config.xdg_force_default)
+            if (options.xdg_force_default)
                 break :fallback;
 
             if (!folder_spec.env.user_dir)
                 break :fallback;
 
-            const env = (xdgUserDirLookup(System, system, io, allocator, folder_spec.env.name) catch |err| switch (err) {
+            const env = (xdgUserDirLookup(System, system, io, gpa, folder_spec.env.name) catch |err| switch (err) {
                 error.OutOfMemory, error.Canceled => |e| return e,
                 else => break :fallback,
             }) orelse break :fallback;
 
             break :env_opt .{ env, true };
         };
-        defer if (env_owned) allocator.free(env);
+        defer if (env_owned) gpa.free(env);
 
         if (folder_spec.env.suffix) |suffix| {
-            return try std.Io.Dir.path.join(allocator, &.{ env, suffix });
+            return try std.Io.Dir.path.join(gpa, &.{ env, suffix });
         }
 
         // XDG_CONFIG_DIRS is a sequence of directories that are separated with ':'
         if (folder == .global_configuration) {
             std.debug.assert(std.mem.eql(u8, folder_spec.env.name, "XDG_CONFIG_DIRS"));
             var iter = std.mem.splitScalar(u8, env, ':');
-            return try allocator.dupe(u8, iter.first());
+            return try gpa.dupe(u8, iter.first());
         }
 
         if (env_owned) {
@@ -269,21 +272,20 @@ fn getPathXdg(
             return env;
         }
 
-        return try allocator.dupe(u8, env);
+        return try gpa.dupe(u8, env);
     }
 
     const default = folder_spec.default orelse return null;
     if (default[0] == '~') {
         const home = system.getenv("HOME") orelse return null;
-        return try std.Io.Dir.path.join(allocator, &.{ home, default[1..] });
+        return try std.Io.Dir.path.join(gpa, &.{ home, default[1..] });
     } else {
-        return try allocator.dupe(u8, default);
+        return try gpa.dupe(u8, default);
     }
 }
 
 /// Encapsulates all operating system interactions
 const DefaultSystem = struct {
-    comptime config: KnownFolderConfig = if (@hasDecl(root, "known_folders_config")) root.known_folders_config else .{},
     environ: *const std.process.Environ.Map,
 
     pub fn deinit(system: *DefaultSystem) void {
@@ -304,7 +306,6 @@ const DefaultSystem = struct {
 
 /// Encapsulates all operating system interactions which can be overriden for testing purposes.
 const TestingSystem = struct {
-    config: KnownFolderConfig,
     /// Specifies all accessible environment variables.
     ///
     /// Notable environment variables are `HOME`, `XDG_CONFIG_HOME` or `XDG_${FOLDER_NAME}_DIR`.
@@ -317,7 +318,7 @@ const TestingSystem = struct {
     tmp_dir: ?std.testing.TmpDir = null,
 
     comptime {
-        std.debug.assert(builtin.os.tag != .windows);
+        std.debug.assert(builtin.target.os.tag != .windows);
     }
 
     pub fn deinit(impl: *TestingSystem) void {
@@ -387,7 +388,7 @@ const xdg_user_dir_lookup_line_buffer_size: usize = 511;
 /// Ported of xdg-user-dir-lookup.c from xdg-user-dirs, which is licensed under the MIT license:
 /// https://cgit.freedesktop.org/xdg/xdg-user-dirs/tree/xdg-user-dir-lookup.c
 fn xdgUserDirLookup(
-    /// `DefaultDefaultSystem` or `TestingDefaultSystem`
+    /// `DefaultSystem` or `TestingSystem`
     comptime System: type,
     system: *System,
     io: std.Io,
@@ -672,6 +673,8 @@ fn getXdgFolderSpec(folder: KnownFolder) XdgFolderSpec {
 const GetPathTestParams = struct {
     system: TestingSystem,
     folder: KnownFolder,
+    xdg_on_mac: bool,
+    xdg_force_default: bool = false,
     expected: ?[]const u8,
 };
 
@@ -681,7 +684,18 @@ fn testGetPath(get_path_params: GetPathTestParams) !void {
             var system = params.system;
             defer system.deinit();
 
-            const actual = try getPathInner(TestingSystem, &system, std.testing.io, allocator, params.folder);
+            const environ: std.process.Environ.Map = .init(.failing);
+
+            const options: Options = .{
+                .io = std.testing.io,
+                .gpa = allocator,
+                .environ = &environ,
+                .folder = params.folder,
+                .xdg_on_mac = params.xdg_on_mac,
+                .xdg_force_default = params.xdg_force_default,
+            };
+
+            const actual = try getPathWithSystem(TestingSystem, &system, &options);
             defer if (actual) |path| allocator.free(path);
 
             if (params.expected == null and actual == null) return;
@@ -695,10 +709,9 @@ fn testGetPath(get_path_params: GetPathTestParams) !void {
 }
 
 test "getPath - no HOME" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = null },
 
@@ -711,27 +724,29 @@ test "getPath - no HOME" {
     try testGetPath(.{
         .system = system,
         .folder = .home,
+        .xdg_on_mac = true,
         .expected = null,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/Desktop",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
+        .xdg_on_mac = true,
         .expected = null,
     });
 }
 
 test "getPath - find HOME without accessing XDG_CONFIG_HOME" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
         },
@@ -741,15 +756,15 @@ test "getPath - find HOME without accessing XDG_CONFIG_HOME" {
     try testGetPath(.{
         .system = system,
         .folder = .home,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe",
     });
 }
 
 test "getPath - no user-dirs.dirs" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = null },
@@ -765,39 +780,43 @@ test "getPath - no user-dirs.dirs" {
     try testGetPath(.{
         .system = system,
         .folder = .home,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/Desktop",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
+        .xdg_on_mac = true,
         .expected = "/mnt/drive/downloads",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .data,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/.local/share",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .fonts,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/.local/share/fonts",
     });
 }
 
 test "getPath - XDG_DATA_HOME with suffix" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = null },
@@ -810,21 +829,22 @@ test "getPath - XDG_DATA_HOME with suffix" {
     try testGetPath(.{
         .system = system,
         .folder = .fonts,
+        .xdg_on_mac = true,
         .expected = "/mnt/data/fonts",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .app_menu,
+        .xdg_on_mac = true,
         .expected = "/mnt/data/applications",
     });
 }
 
 test "getPath - user-dirs.dirs" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = null },
@@ -850,27 +870,29 @@ test "getPath - user-dirs.dirs" {
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = "/mnt/home/Desktop",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/Downloads",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .documents,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/xdg/Documents",
     });
 }
 
 test "getPath - user-dirs.dirs - XDG_CONFIG_HOME" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = "/home/janedoe/custom" },
@@ -889,15 +911,15 @@ test "getPath - user-dirs.dirs - XDG_CONFIG_HOME" {
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = "/mnt/Desktop",
     });
 }
 
 test "getPath - user-dirs.dirs - duplicate config" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = null },
@@ -917,15 +939,15 @@ test "getPath - user-dirs.dirs - duplicate config" {
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = "/mnt/second/Desktop",
     });
 }
 
 test "getPath - user-dirs.dirs - trailing newline" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = "/home/janedoe/custom" },
@@ -945,15 +967,15 @@ test "getPath - user-dirs.dirs - trailing newline" {
     try testGetPath(.{
         .system = system,
         .folder = .videos,
+        .xdg_on_mac = true,
         .expected = "/mnt/Videos",
     });
 }
 
 test "getPath - user-dirs.dirs - escaped path" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = null },
@@ -974,18 +996,20 @@ test "getPath - user-dirs.dirs - escaped path" {
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = "/mnt/\\/Desktop",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
+        .xdg_on_mac = true,
         .expected = "/mnt/ /Desktop",
     });
 }
 
 test "getPath - user-dirs.dirs - very long line" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     const len = "XDG_DESKTOP_DIR  =\"\"".len;
     const xdg_dir_desktop = "/" ++ @as([xdg_user_dir_lookup_line_buffer_size - len - 1]u8, @splat('a'));
@@ -994,7 +1018,6 @@ test "getPath - user-dirs.dirs - very long line" {
     const xdg_dir_documents_truncated = "/" ++ @as([xdg_user_dir_lookup_line_buffer_size - len]u8, @splat('c'));
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = null },
@@ -1019,33 +1042,36 @@ test "getPath - user-dirs.dirs - very long line" {
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = xdg_dir_desktop,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .downloads,
+        .xdg_on_mac = true,
         .expected = xdg_dir_download,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .documents,
+        .xdg_on_mac = true,
         .expected = xdg_dir_documents_truncated,
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .music,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/music",
     });
 }
 
 test "getPath - user-dirs.dirs - invalid path" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
             .{ .key = "XDG_CONFIG_HOME", .value = null },
@@ -1064,15 +1090,15 @@ test "getPath - user-dirs.dirs - invalid path" {
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
         .expected = "/home/janedoe/Desktop", // fallback
     });
 }
 
 test "getPath - .global_configuration" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "XDG_CONFIG_DIRS", .value = null },
         },
@@ -1082,15 +1108,15 @@ test "getPath - .global_configuration" {
     try testGetPath(.{
         .system = system,
         .folder = .global_configuration,
+        .xdg_on_mac = true,
         .expected = "/etc",
     });
 }
 
 test "getPath - .global_configuration with XDG_CONFIG_DIRS" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true },
         .env_map = &.{
             .{ .key = "XDG_CONFIG_DIRS", .value = "/mnt/etc" },
         },
@@ -1100,6 +1126,7 @@ test "getPath - .global_configuration with XDG_CONFIG_DIRS" {
     try testGetPath(.{
         .system = system,
         .folder = .global_configuration,
+        .xdg_on_mac = true,
         .expected = "/mnt/etc",
     });
 
@@ -1109,15 +1136,15 @@ test "getPath - .global_configuration with XDG_CONFIG_DIRS" {
     try testGetPath(.{
         .system = system,
         .folder = .global_configuration,
+        .xdg_on_mac = true,
         .expected = "/mnt/first",
     });
 }
 
 test "getPath - with xdg_force_default=true" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = true, .xdg_force_default = true },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
 
@@ -1130,27 +1157,32 @@ test "getPath - with xdg_force_default=true" {
     try testGetPath(.{
         .system = system,
         .folder = .home,
+        .xdg_on_mac = true,
+        .xdg_force_default = true,
         .expected = "/home/janedoe",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = true,
+        .xdg_force_default = true,
         .expected = "/home/janedoe/Desktop",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .global_configuration,
+        .xdg_on_mac = true,
+        .xdg_force_default = true,
         .expected = "/etc",
     });
 }
 
 test "getPath - with xdg_on_mac=false" {
-    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    if (!builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = false },
         .env_map = &.{
             .{ .key = "HOME", .value = "/home/janedoe" },
         },
@@ -1160,27 +1192,29 @@ test "getPath - with xdg_on_mac=false" {
     try testGetPath(.{
         .system = system,
         .folder = .desktop,
+        .xdg_on_mac = false,
         .expected = "/home/janedoe/Desktop",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .fonts,
+        .xdg_on_mac = false,
         .expected = "/home/janedoe/Library/Fonts",
     });
 
     try testGetPath(.{
         .system = system,
         .folder = .videos,
+        .xdg_on_mac = false,
         .expected = "/home/janedoe/Movies",
     });
 }
 
 test "getPath - .global_configuration with xdg_on_mac=false" {
-    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    if (!builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
 
     var system: TestingSystem = .{
-        .config = .{ .xdg_on_mac = false },
         .env_map = &.{
             // The fact that the following line wasn't necessary proves that "HOME" was never accessed.
             // .{ .key = "HOME", .value = "/home/janedoe" },
@@ -1191,6 +1225,7 @@ test "getPath - .global_configuration with xdg_on_mac=false" {
     try testGetPath(.{
         .system = system,
         .folder = .global_configuration,
+        .xdg_on_mac = false,
         .expected = "/Library/Preferences",
     });
 }
@@ -1200,20 +1235,34 @@ test "query each known folders" {
     defer environ.deinit();
 
     for (std.meta.tags(KnownFolder)) |folder| {
-        const path_or_null = try getPath(std.testing.io, std.testing.allocator, &environ, folder);
+        const options: Options = .{
+            .io = std.testing.io,
+            .gpa = std.testing.allocator,
+            .environ = &environ,
+            .folder = folder,
+            .xdg_on_mac = false,
+        };
+        const path_or_null = try getPath(&options);
         defer if (path_or_null) |path| std.testing.allocator.free(path);
         std.debug.print("{s} => {?s}\n", .{ @tagName(folder), path_or_null });
     }
 }
 
 test "open each known folders" {
-    if (builtin.os.tag == .wasi) return error.SkipZigTest;
+    if (builtin.target.os.tag == .wasi) return error.SkipZigTest;
 
     var environ = try std.testing.environ.createMap(std.testing.allocator);
     defer environ.deinit();
 
     for (std.meta.tags(KnownFolder)) |folder| {
-        var dir_or_null = open(std.testing.io, std.testing.allocator, &environ, folder, .{}) catch |e| switch (e) {
+        const options: Options = .{
+            .io = std.testing.io,
+            .gpa = std.testing.allocator,
+            .environ = &environ,
+            .folder = folder,
+            .xdg_on_mac = false,
+        };
+        var dir_or_null = open(&options, .{}) catch |e| switch (e) {
             error.FileNotFound => return,
             else => return e,
         };
